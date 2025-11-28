@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ROADMATE - GPS Navigation</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a2333">
+    
+    <link href="https://unpkg.com/maplibre-gl@4.0.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <script src="https://unpkg.com/maplibre-gl@4.0.2/dist/maplibre-gl.js"></script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            overflow: hidden;
+            background: #0f1520;
+            color: white;
+        }
+        
+        /* --- MAPA --- */
+        #map {
+            position: absolute;
+            top: 60px;
+            left: 150px;
+            right: 300px;
+            bottom: 70px;
+            z-index: 1 !important;
+            /* Filtro CSS para escurecer o mapa - modo noturno */
+            filter: brightness(0.7) contrast(1.1);
+            background-color: #1a2333;
+        }
+        
+        /* --- BARRA DE NAVEGACAO SUPERIOR (Header) --- */
+        #navigation-header {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 60px;
+            background: #1a2333;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 15px;
+            z-index: 50 !important;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+        }
+        #eta-info {
+            font-size: 14px;
+            text-align: center;
+            padding: 8px 15px;
+            background: #007bff;
+            border-radius: 8px;
+            font-weight: bold;
+            min-width: 100px;
+        }
+        #eta-info .label {
+            display: block;
+            font-size: 11px;
+            opacity: 0.8;
+        }
+        #eta-time {
+            display: block;
+            font-size: 18px;
+        }
+        #street-name {
+            font-size: 20px;
+            font-weight: 600;
+            flex-grow: 1;
+            text-align: center;
+            color: #00ff7f;
+            text-shadow: 0 0 10px rgba(0, 255, 127, 0.5);
+        }
+        #menu-and-sound-controls {
+            display: flex;
+            gap: 10px;
+        }
+        #menu-and-sound-controls button {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: white;
+            font-size: 22px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        #menu-and-sound-controls button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        /* --- CAIXA LATERAL DE INSTRUCOES (TomTom Side Border) --- */
+        #instruction-box {
+            position: absolute;
+            top: 60px;
+            left: 0;
+            height: calc(100vh - 60px);
+            width: 150px;
+            background: #1a2333;
+            z-index: 50 !important;
+            padding: 20px 15px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            text-align: center;
+            color: white;
+            box-shadow: 5px 0 15px rgba(0, 0, 0, 0.5);
+            line-height: 1.3;
+        }
+        #next-instruction {
+            font-size: 16px;
+            font-weight: bold;
+            color: #00ff7f;
+            margin-bottom: 15px;
+            text-shadow: 0 0 8px rgba(0, 255, 127, 0.4);
+        }
+        #distance-to-next {
+            font-size: 32px;
+            font-weight: 900;
+            margin-bottom: 15px;
+            color: white;
+        }
+        #current-street-name {
+            font-size: 12px;
+            color: #aaa;
+        }
+        
+        /* --- WIDGET DE ALERTA DE PROXIMA AMEACA --- */
+        #next-alert-widget {
+            position: absolute;
+            top: 70px;
+            right: 310px;
+            background: #ff4757;
+            color: white;
+            padding: 10px 18px;
+            border-radius: 10px;
+            font-weight: bold;
+            font-size: 14px;
+            z-index: 45 !important;
+            box-shadow: 0 0 20px rgba(255, 71, 87, 0.6);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: pulse-alert 2s infinite;
+        }
+        @keyframes pulse-alert {
+            0%, 100% { box-shadow: 0 0 20px rgba(255, 71, 87, 0.6); }
+            50% { box-shadow: 0 0 35px rgba(255, 71, 87, 0.9); }
+        }
+        #next-alert-distance {
+            background: white;
+            color: #1a2333;
+            padding: 4px 10px;
+            border-radius: 5px;
+            font-weight: 900;
+        }
+        
+        /* --- BARRA LATERAL RADARBOT (DIREITA) --- */
+        #sidebar-container {
+            position: absolute;
+            top: 60px;
+            right: 0;
+            height: calc(100vh - 60px);
+            width: 300px;
+            background: #1a2333;
+            color: #fff;
+            padding: 15px;
+            box-shadow: -5px 0 15px rgba(0, 0, 0, 0.5);
+            z-index: 50 !important;
+            overflow-y: auto;
+        }
+        #toggle-sidebar-btn {
+            display: none;
+        }
+        #sidebar-header {
+            color: #00ff7f;
+            font-size: 16px;
+            margin-bottom: 15px;
+            text-shadow: 0 0 8px rgba(0, 255, 127, 0.4);
+        }
+        #route-summary {
+            background: rgba(0, 123, 255, 0.2);
+            padding: 12px;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+            margin-bottom: 15px;
+        }
+        .route-info {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+        #sidebar-container hr {
+            border: none;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            margin: 15px 0;
+        }
+        .radarbot-header {
+            color: #ff6666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        #poi-list, #alert-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        #poi-list li, #alert-list li {
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        #poi-list li img, #alert-list li img {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+        }
+        #gamification-status {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(255, 215, 0, 0.1);
+            border-radius: 8px;
+            text-align: center;
+        }
+        #report-btn {
+            margin-top: 10px;
+            background: #ff4757;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            width: 100%;
+        }
+        
+        /* --- CONTROLOS INFERIORES --- */
+        #controls-bottom {
+            position: absolute;
+            bottom: 0;
+            left: 150px;
+            right: 300px;
+            height: 70px;
+            background: #1a2333;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            gap: 15px;
+            z-index: 40 !important;
+            box-shadow: 0 -5px 15px rgba(0, 0, 0, 0.5);
+        }
+        #speed-indicator {
+            min-width: 100px;
+            height: 50px;
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 15px;
+            box-shadow: 0 4px 15px rgba(0, 123, 255, 0.4);
+        }
+        #current-speed {
+            font-size: 28px;
+            font-weight: 900;
+        }
+        .unit {
+            font-size: 14px;
+            opacity: 0.8;
+        }
+        #search-input {
+            flex: 1;
+            height: 45px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            padding: 0 15px;
+            font-size: 16px;
+            color: white;
+            outline: none;
+        }
+        #search-input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+        #search-input:focus {
+            border-color: #00ff7f;
+            box-shadow: 0 0 10px rgba(0, 255, 127, 0.3);
+        }
+        #btn-search {
+            height: 45px;
+            width: 50px;
+            background: #00ff7f;
+            border: none;
+            border-radius: 10px;
+            font-size: 20px;
+            cursor: pointer;
+        }
+        
+        /* --- PAINEL DE PESQUISA --- */
+        #search-panel {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #0f1520;
+            z-index: 100 !important;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        #search-panel.hidden {
+            display: none;
+        }
+        #search-header {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        #btn-close-search {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        #search-input-panel {
+            flex: 1;
+            height: 45px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            padding: 0 15px;
+            font-size: 16px;
+            color: white;
+            outline: none;
+        }
+        #search-results {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .search-result-item {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .search-result-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .search-result-item h4 {
+            color: #00ff7f;
+            margin-bottom: 5px;
+        }
+        .search-result-item p {
+            color: #aaa;
+            font-size: 13px;
+        }
+        
+        /* --- ALERTA DE RADAR --- */
+        #radar-alert {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: linear-gradient(135deg, #ff4757, #cc0033);
+            padding: 30px 50px;
+            border-radius: 20px;
+            z-index: 200 !important;
+            display: flex;
+            align-items: center;
+            gap: 25px;
+            box-shadow: 0 0 50px rgba(255, 71, 87, 0.8);
+            animation: radar-pulse 0.5s ease-in-out infinite alternate;
+        }
+        #radar-alert.hidden {
+            display: none;
+        }
+        @keyframes radar-pulse {
+            from { transform: translate(-50%, -50%) scale(1); }
+            to { transform: translate(-50%, -50%) scale(1.05); }
+        }
+        #radar-icon img {
+            border: 4px solid white;
+        }
+        #radar-info {
+            text-align: center;
+        }
+        #radar-type {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        #radar-distance-alert {
+            font-size: 36px;
+            font-weight: 900;
+        }
+        #radar-limit {
+            font-size: 24px;
+            background: white;
+            color: #cc0033;
+            padding: 5px 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        
+        /* --- LOADING --- */
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #0f1520;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 999 !important;
+        }
+        #loading.hidden {
+            display: none;
+        }
+        #loading-spinner {
+            width: 60px;
+            height: 60px;
+            border: 5px solid rgba(0, 255, 127, 0.2);
+            border-top-color: #00ff7f;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        #loading-text {
+            margin-top: 20px;
+            color: #00ff7f;
+            font-size: 18px;
+        }
+        
+        /* --- RESPONSIVE MOBILE --- */
+        @media (max-width: 768px) {
+            #map {
+                top: 60px;
+                left: 0;
+                right: 0;
+                bottom: 70px;
+            }
+            #instruction-box {
+                display: none;
+            }
+            #next-alert-widget {
+                top: auto;
+                bottom: 130px;
+                right: 10px;
+                font-size: 12px;
+                padding: 8px 12px;
+            }
+            #sidebar-container {
+                display: none;
+            }
+            #controls-bottom {
+                left: 0;
+                right: 0;
+                height: 70px;
+            }
+            #speed-indicator {
+                min-width: 80px;
+                height: 45px;
+            }
+            #current-speed {
+                font-size: 22px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div id="navigation-header">
+        <div id="eta-info">
+            <span class="label">Chegada</span>
+            <span id="eta-time">--:--</span>
+        </div>
+        <div id="street-name">ROADMATE GPS</div>
+        <div id="menu-and-sound-controls">
+            <button id="sound-btn" data-testid="button-sound">🔊</button>
+            <button id="settings-btn" data-testid="button-settings">⚙️</button>
+        </div>
+    </div>
+    
+    <div id="instruction-box">
+        <div id="next-instruction">Aguardando</div>
+        <div id="distance-to-next">--</div>
+        <div id="current-street-name">Selecione destino</div>
+    </div>
+
+    <div id="next-alert-widget">
+        <span id="next-alert-type">Aguardando Conexao</span>
+        <span id="next-alert-distance">...</span>
+    </div>
+
+    <div id="sidebar-container">
+        <button id="toggle-sidebar-btn" data-testid="button-toggle-sidebar">☰</button>
+        <div id="sidebar-content">
+            <h3 id="sidebar-header">📍 Pontos de Interesse</h3>
+            <div id="route-summary">
+                <p class="route-info">Tempo: <span id="time-left">N/A</span></p>
+                <p class="route-info">Distancia: <span id="route-distance">N/A</span></p>
+            </div>
+            
+            <hr>
+            
+            <ul id="poi-list"></ul>
+            <hr>
+
+            <h3 class="radarbot-header">⚠️ Alertas</h3>
+            <ul id="alert-list"></ul>
+
+            <div id="gamification-status">
+                <p>⭐ Pontuacao: <span id="user-score">0</span></p>
+                <button id="report-btn" data-testid="button-report">🚨 Reportar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="controls-bottom">
+        <div id="speed-indicator">
+            <span id="current-speed">0</span><span class="unit"> km/h</span>
+        </div>
+        <input type="text" id="search-input" placeholder="Para onde? (Pesquisa)" data-testid="input-search">
+        <button id="btn-search" data-testid="button-search-go">🔍</button>
+    </div>
+    
+    <div id="search-panel" class="hidden">
+        <div id="search-header">
+            <button id="btn-close-search" data-testid="button-close-search">← Voltar</button>
+            <input type="text" id="search-input-panel" placeholder="Para onde?" data-testid="input-search-panel" autocomplete="off">
+        </div>
+        <div id="search-results"></div>
+    </div>
+    
+    <div id="radar-alert" class="hidden">
+        <div id="radar-icon">
+            <img src="/gps/icons/fixed-radar.jpg" alt="radar" style="width:64px;height:64px;border-radius:50%;">
+        </div>
+        <div id="radar-info">
+            <div id="radar-type">Radar Fixo</div>
+            <div id="radar-distance-alert">500m</div>
+            <div id="radar-limit">50 km/h</div>
+        </div>
+    </div>
+    
+    <div id="proximity-warning" style="display:none;"></div>
+    
+    <div id="loading">
+        <div id="loading-spinner"></div>
+        <div id="loading-text">A inicializar GPS...</div>
+    </div>
+
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/gps/service-worker.js')
+                    .then(reg => console.log('[PWA] Service Worker registado'))
+                    .catch(err => console.log('[PWA] Service Worker falhou:', err));
+            });
+        }
+    </script>
+    <script src="script.js"></script>
+</body>
+</html>

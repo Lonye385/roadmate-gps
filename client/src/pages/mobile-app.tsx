@@ -1,0 +1,2611 @@
+console.log('[ROADMATE] 📦 mobile-app.tsx MODULE LOADING...');
+
+import { useState, useEffect, useRef } from 'react';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Navigation, User, Trophy, AlertTriangle, Play, Square, Car, Bike, Truck, Zap, MapPin, Award, Flag, Target, Clock, Gauge, Search, X, ArrowRight, ArrowLeft, ArrowUp, TrendingUp, Volume2, VolumeX, Moon, Sun, MapPinned, Warehouse, Shield, Star, CheckCircle2, XCircle, Camera, Fuel } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useToast } from '@/hooks/use-toast';
+import { apiRequest } from '@/lib/queryClient';
+import type { SpeedCamera, TruckPark } from '@shared/schema';
+
+type Screen = 'map' | 'profile' | 'leaderboard' | 'reports';
+type VehicleType = 'car' | 'motorcycle' | 'truck';
+
+interface GeoapifyRoute {
+  distance: number;
+  time: number;
+  geometry: {
+    coordinates: [number, number][];
+  };
+}
+
+export default function MobileApp() {
+  console.log('[ROADMATE] 🚀 Mobile app component mounting...');
+  console.log('[ROADMATE] Window location:', window.location.href);
+  console.log('[ROADMATE] User agent:', navigator.userAgent);
+  
+  // Check Geoapify API key
+  const geoapifyKey = import.meta.env.VITE_GEOAPIFY_API_KEY || '';
+  const hasGeoapifyKey = geoapifyKey && geoapifyKey.trim() !== '';
+
+  const [currentScreen, setCurrentScreen] = useState<Screen>('map');
+  const [tripActive, setTripActive] = useState(false);
+  const [distance, setDistance] = useState(0);
+  const [xp, setXp] = useState(11500);
+  const [selectedVehicle, setSelectedVehicle] = useState<VehicleType>('car');
+  const [currentLocation, setCurrentLocation] = useState<[number, number] | null>(null);
+  const [previousLocation, setPreviousLocation] = useState<[number, number] | null>(null);
+  const [speed, setSpeed] = useState(0);
+  const [eta, setEta] = useState<string | null>(null);
+  const [gpsReady, setGpsReady] = useState(false);
+  const [gpsError, setGpsError] = useState<string | null>(null);
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null); // Fixed: OpenStreetMap doesn't need API key!
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [showSearch, setShowSearch] = useState(false);
+  const [destination, setDestination] = useState<[number, number] | null>(null);
+  const [routeInstructions, setRouteInstructions] = useState<any[]>([]);
+  const [currentInstruction, setCurrentInstruction] = useState<string | null>(null);
+  const [darkMode, setDarkMode] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [voiceAvailable, setVoiceAvailable] = useState(true);
+  const [offRoute, setOffRoute] = useState(false);
+  const [routeGeometry, setRouteGeometry] = useState<[number, number][]>([]);
+  const [speedCameras, setSpeedCameras] = useState<SpeedCamera[]>([]);
+  const [nearbyCamera, setNearbyCamera] = useState<SpeedCamera | null>(null);
+  const [showRadarModal, setShowRadarModal] = useState(false);
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
+  const [cameraToVerify, setCameraToVerify] = useState<SpeedCamera | null>(null);
+  const [verificationLoading, setVerificationLoading] = useState(false);
+  const [truckParks, setTruckParks] = useState<TruckPark[]>([]);
+  const [gasStations, setGasStations] = useState<Array<{id: string; name: string; latitude: number; longitude: number}>>([]);
+  const [selectedPark, setSelectedPark] = useState<TruckPark | null>(null);
+  const [showParkDetails, setShowParkDetails] = useState(false);
+  const [showUpdateForm, setShowUpdateForm] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUsername, setCurrentUsername] = useState<string | null>(null);
+  const [showUsernamePrompt, setShowUsernamePrompt] = useState(false);
+  const [tempUsername, setTempUsername] = useState('');
+  const [updateType, setUpdateType] = useState<'availability' | 'amenities' | 'rating'>('availability');
+  const [updateAvailableSpots, setUpdateAvailableSpots] = useState<number>(0);
+  const [updateRating, setUpdateRating] = useState<number>(3);
+  const [updateComment, setUpdateComment] = useState('');
+  const [userBadges, setUserBadges] = useState<any[]>([]);
+  const [leaderboardData, setLeaderboardData] = useState<any[]>([]);
+  const [nearbyPOIs, setNearbyPOIs] = useState<Array<{
+    type: 'truck_park' | 'speed_camera' | 'gas_station';
+    id: string;
+    name: string;
+    distance: number;
+    latitude: number;
+    longitude: number;
+    icon: string;
+  }>>([]);
+  const [anonymousUsers, setAnonymousUsers] = useState<Array<{
+    vehicleType: string;
+    latitude: number;
+    longitude: number;
+    timestamp: number;
+  }>>([]);
+  const [invisibleMode, setInvisibleMode] = useState(false);
+  // Stable anonymous ID for entire session (prevents userId from changing every update!)
+  const [anonymousId] = useState(() => `anon-${Date.now()}`);
+  const lastRecalculation = useRef<number>(0);
+  const lastCameraAlert = useRef<string | null>(null);
+  const radarModalTimeout = useRef<number | null>(null);
+  const ws = useRef<WebSocket | null>(null);
+  const userMarkers = useRef<Map<string, maplibregl.Marker>>(new Map());
+  
+  const mapContainer = useRef<HTMLDivElement>(null);
+  const map = useRef<maplibregl.Map | null>(null);
+  const userMarker = useRef<maplibregl.Marker | null>(null);
+  const destinationMarker = useRef<maplibregl.Marker | null>(null);
+  const parkMarkers = useRef<Map<string, maplibregl.Marker>>(new Map());
+  const routeLayer = useRef<string | null>(null);
+  const tripIntervalRef = useRef<number | null>(null);
+  const watchIdRef = useRef<number | null>(null);
+  const lastSpokenInstruction = useRef<string | null>(null);
+  const { toast } = useToast();
+
+  // Log initialization for debugging mobile issues
+  useEffect(() => {
+    console.log('[ROADMATE] Mobile app initialized');
+    console.log('[ROADMATE] Geoapify API key present:', hasGeoapifyKey);
+    console.log('[ROADMATE] Geolocation available:', 'geolocation' in navigator);
+    console.log('[ROADMATE] Speech synthesis available:', 'speechSynthesis' in window);
+  }, [hasGeoapifyKey]);
+
+  // Bootstrap user identity from localStorage
+  useEffect(() => {
+    const savedUsername = localStorage.getItem('roadmate_username');
+    const savedUserId = localStorage.getItem('roadmate_userId');
+    
+    if (savedUsername && savedUserId) {
+      setCurrentUsername(savedUsername);
+      setCurrentUserId(savedUserId);
+      console.log('[ROADMATE] User identity restored:', savedUsername);
+    } else if (savedUsername && !savedUserId) {
+      // Username exists but no userId - fetch from API
+      apiRequest('POST', '/api/users/get-or-create', { username: savedUsername })
+        .then((user: any) => {
+          setCurrentUserId(user.id);
+          setCurrentUsername(user.username);
+          localStorage.setItem('roadmate_userId', user.id);
+          console.log('[ROADMATE] User identity created:', user.username);
+        })
+        .catch(err => {
+          console.error('[ROADMATE] Failed to get/create user:', err);
+          // Clear invalid data
+          localStorage.removeItem('roadmate_username');
+        });
+    }
+  }, []);
+
+  // Fetch user badges when userId is available
+  useEffect(() => {
+    if (currentUserId) {
+      fetch(`/api/user-badges/${currentUserId}`)
+        .then(res => res.json())
+        .then(badges => setUserBadges(badges))
+        .catch(err => console.error('[ROADMATE] Failed to fetch badges:', err));
+    }
+  }, [currentUserId]);
+
+  // Fetch leaderboard data
+  useEffect(() => {
+    fetch('/api/leaderboard?limit=10')
+      .then(res => res.json())
+      .then(leaders => setLeaderboardData(leaders))
+      .catch(err => console.error('[ROADMATE] Failed to fetch leaderboard:', err));
+  }, []);
+
+  // Haversine formula to calculate distance between two GPS coordinates
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371; // Earth radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  };
+
+  // Text-to-speech for navigation with fallback
+  const speak = (text: string, options?: { rate?: number; pitch?: number; urgent?: boolean }) => {
+    if (!voiceEnabled) return;
+    
+    // Check if speech synthesis is available
+    if (!('speechSynthesis' in window)) {
+      setVoiceAvailable(false);
+      // Show visual fallback
+      toast({
+        title: text,
+        description: "Voz não disponível - usando notificações visuais",
+        duration: 3000,
+      });
+      return;
+    }
+    
+    // Don't repeat the same instruction
+    if (lastSpokenInstruction.current === text) return;
+    lastSpokenInstruction.current = text;
+    
+    try {
+      // Cancel any ongoing speech
+      window.speechSynthesis.cancel();
+      
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'pt-PT';
+      // Enhanced TTS: faster + higher pitch for urgent alerts (mobile cameras, off-route)
+      utterance.rate = options?.rate ?? (options?.urgent ? 1.2 : 0.9);
+      utterance.pitch = options?.pitch ?? (options?.urgent ? 1.1 : 1);
+      
+      utterance.onerror = () => {
+        setVoiceAvailable(false);
+        toast({
+          title: text,
+          description: "Voz desativada - usando notificações visuais",
+        });
+      };
+      
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      setVoiceAvailable(false);
+      toast({
+        title: text,
+        description: "Erro na voz - usando notificações visuais",
+      });
+    }
+  };
+
+  // Save username and create user identity
+  const handleSaveUsername = async () => {
+    if (!tempUsername || tempUsername.trim().length < 3) {
+      toast({
+        title: "Erro",
+        description: "Nome deve ter pelo menos 3 caracteres",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      const user: any = await apiRequest('POST', '/api/users/get-or-create', { username: tempUsername.trim() });
+      setCurrentUserId(user.id);
+      setCurrentUsername(user.username);
+      localStorage.setItem('roadmate_username', user.username);
+      localStorage.setItem('roadmate_userId', user.id);
+      setShowUsernamePrompt(false);
+      
+      toast({
+        title: "Bem-vindo!",
+        description: `Conta criada: ${user.username}`,
+      });
+
+      // Automatically open update form after onboarding
+      if (selectedPark) {
+        setShowUpdateForm(true);
+        setUpdateAvailableSpots(selectedPark.availableSpots || 0);
+      }
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.message || "Falha ao criar conta",
+        variant: "destructive"
+      });
+    }
+  };
+
+  // Submit park update and earn XP
+  const handleSubmitParkUpdate = async () => {
+    if (!currentUserId || !selectedPark) return;
+
+    try {
+      const updateData: any = {
+        userId: currentUserId,
+        updateType,
+        comment: updateComment || null
+      };
+
+      if (updateType === 'availability') {
+        updateData.availableSpots = updateAvailableSpots;
+      } else if (updateType === 'rating') {
+        updateData.rating = updateRating;
+      }
+
+      const result: any = await apiRequest('POST', `/api/truck-parks/${selectedPark.id}/updates`, updateData);
+      
+      toast({
+        title: "Atualização enviada!",
+        description: `+${result.xpEarned} XP ganho! 🎉`,
+      });
+
+      // Refresh truck parks and update selectedPark
+      if (currentLocation) {
+        const response = await fetch(`/api/truck-parks/nearby?lat=${currentLocation[1]}&lon=${currentLocation[0]}&radius=50`);
+        const parks = await response.json();
+        setTruckParks(parks);
+        
+        // Find and update selectedPark with fresh data
+        const updatedPark = parks.find((p: TruckPark) => p.id === selectedPark.id);
+        if (updatedPark) {
+          setSelectedPark(updatedPark);
+        }
+      }
+
+      setShowUpdateForm(false);
+      setUpdateComment('');
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.message || "Falha ao enviar atualização",
+        variant: "destructive"
+      });
+    }
+  };
+
+  // Check if user is off route and recalculate (with throttling)
+  const checkAndRecalculateRoute = async (currentLoc: [number, number]) => {
+    if (!destination || routeGeometry.length === 0) return;
+    
+    // Find closest point on actual route geometry
+    let minDistance = Infinity;
+    for (const coord of routeGeometry) {
+      const dist = calculateDistance(currentLoc[1], currentLoc[0], coord[1], coord[0]);
+      minDistance = Math.min(minDistance, dist);
+    }
+    
+    // If more than 150 meters from route, recalculate (but throttle)
+    const now = Date.now();
+    if (minDistance > 0.15) { // 150 meters in km
+      if (!offRoute && (now - lastRecalculation.current) > 10000) { // Max once every 10 seconds
+        setOffRoute(true);
+        lastRecalculation.current = now;
+        speak('Fora da rota. A recalcular...');
+        toast({
+          title: "Fora da Rota",
+          description: "A recalcular rota...",
+          variant: "destructive"
+        });
+        await calculateRoute(destination);
+      }
+    } else {
+      if (offRoute) {
+        setOffRoute(false);
+      }
+    }
+  };
+
+  // Check for nearby speed cameras and alert
+  const checkSpeedCameras = (currentLoc: [number, number]) => {
+    if (!tripActive || speed === 0) return;
+
+    const alertDistance = 0.5; // 500 meters
+
+    for (const camera of speedCameras) {
+      const distance = calculateDistance(currentLoc[1], currentLoc[0], camera.latitude, camera.longitude);
+      
+      if (distance <= alertDistance) {
+        // Don't repeat same camera alert
+        if (lastCameraAlert.current === camera.id) continue;
+        lastCameraAlert.current = camera.id;
+        
+        setNearbyCamera(camera);
+        setShowRadarModal(true);
+        
+        // Alert types based on camera type
+        const alertMessages: Record<string, string> = {
+          'fixed': 'Radar fixo à frente!',
+          'mobile': 'Zona de radares móveis!',
+          'redlight': 'Radar de semáforo!',
+          'section': 'Radar de troço!'
+        };
+        
+        const message = alertMessages[camera.type] || 'Radar à frente!';
+        // Enhanced TTS: urgent (faster + higher pitch) for mobile cameras
+        speak(message, { urgent: camera.isMobile === true });
+        
+        // Visual + sound alert
+        toast({
+          title: message,
+          description: `Limite: ${camera.speedLimit} km/h • ${Math.round(distance * 1000)}m`,
+          variant: "destructive",
+          duration: 5000,
+        });
+        
+        // Audio beep (using Web Audio API)
+        try {
+          const audioContext = new AudioContext();
+          const oscillator = audioContext.createOscillator();
+          const gainNode = audioContext.createGain();
+          
+          oscillator.connect(gainNode);
+          gainNode.connect(audioContext.destination);
+          
+          oscillator.frequency.value = 800;
+          oscillator.type = 'sine';
+          
+          gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+          
+          oscillator.start(audioContext.currentTime);
+          oscillator.stop(audioContext.currentTime + 0.5);
+        } catch (error) {
+          console.error('Audio alert error:', error);
+        }
+        
+        // Mobile vibration (if supported)
+        if ('vibrate' in navigator) {
+          // Different vibration patterns for different camera types
+          const vibrationPatterns: Record<string, number[]> = {
+            'fixed': [200, 100, 200],           // Two short buzzes
+            'mobile': [400, 100, 400, 100, 400], // Three medium buzzes  
+            'redlight': [100, 50, 100, 50, 100], // Three quick buzzes
+            'section': [500]                     // One long buzz
+          };
+          const pattern = vibrationPatterns[camera.type] || [200];
+          try {
+            navigator.vibrate(pattern);
+          } catch (error) {
+            console.error('Vibration error:', error);
+          }
+        }
+        
+        // Clear previous timeout to prevent premature closure of new alerts
+        if (radarModalTimeout.current !== null) {
+          clearTimeout(radarModalTimeout.current);
+        }
+        
+        // Clear alert and show verification modal after passing camera
+        radarModalTimeout.current = window.setTimeout(() => {
+          setShowRadarModal(false);
+          setNearbyCamera(current => {
+            if (current?.id === camera.id) {
+              // Show verification modal only for mobile cameras
+              if (current.isMobile && currentUserId) {
+                setCameraToVerify(current);
+                setShowVerificationModal(true);
+              }
+              return null;
+            }
+            return current;
+          });
+          radarModalTimeout.current = null;
+        }, 8000);
+        
+        break; // Only alert for closest camera
+      }
+    }
+  };
+
+  // Fetch nearby truck parks when location changes
+  useEffect(() => {
+    if (!currentLocation) return;
+    
+    const fetchParks = async () => {
+      try {
+        const vehicleParam = selectedVehicle === 'truck' ? '&vehicleType=truck' : '';
+        const response = await fetch(
+          `/api/truck-parks/nearby?lat=${currentLocation[1]}&lon=${currentLocation[0]}&radius=50${vehicleParam}`
+        );
+        if (response.ok) {
+          const parks: TruckPark[] = await response.json();
+          setTruckParks(parks);
+        }
+      } catch (error) {
+        console.error('Error fetching truck parks:', error);
+      }
+    };
+    
+    fetchParks();
+  }, [currentLocation, selectedVehicle]);
+
+  // Fetch nearby gas stations using Geoapify Places API
+  useEffect(() => {
+    if (!currentLocation) return;
+    
+    const fetchGasStations = async () => {
+      try {
+        const apiKey = import.meta.env.VITE_GEOAPIFY_API_KEY;
+        if (!apiKey) return;
+        
+        const [lon, lat] = currentLocation;
+        const response = await fetch(
+          `https://api.geoapify.com/v2/places?categories=service.fuel&filter=circle:${lon},${lat},10000&limit=5&apiKey=${apiKey}`
+        );
+        
+        if (response.ok) {
+          const data = await response.json();
+          const stations = data.features?.map((f: any) => ({
+            id: f.properties.place_id || `gas-${f.geometry.coordinates[0]}-${f.geometry.coordinates[1]}`,
+            name: f.properties.name || f.properties.address_line1 || 'Bomba de Gasolina',
+            latitude: f.geometry.coordinates[1],
+            longitude: f.geometry.coordinates[0]
+          })) || [];
+          setGasStations(stations);
+        }
+      } catch (error) {
+        console.error('Error fetching gas stations:', error);
+        setGasStations([]); // Clear on error
+      }
+    };
+    
+    fetchGasStations();
+  }, [currentLocation]);
+
+  // Update truck park markers on map
+  useEffect(() => {
+    if (!map.current || !map.current.isStyleLoaded()) return;
+    
+    // Remove old markers
+    parkMarkers.current.forEach(marker => marker.remove());
+    parkMarkers.current.clear();
+    
+    // Add new markers for truck parks
+    truckParks.forEach(park => {
+      // Create custom HTML marker element
+      const el = document.createElement('div');
+      el.className = 'truck-park-marker';
+      el.style.cursor = 'pointer';
+      el.style.width = '32px';
+      el.style.height = '32px';
+      el.innerHTML = `
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="11" fill="#10B981" stroke="white" stroke-width="2"/>
+          <path d="M8 7h8M8 7v5l4 2 4-2V7M8 7H6v5l2 2m8-7h2v5l-2 2m-8 0h8m-8 0l-1 3h2m6-3l1 3h-2m-4-3v3" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      `;
+      
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([park.longitude, park.latitude])
+        .addTo(map.current!);
+      
+      // Click handler to show park details
+      el.addEventListener('click', () => {
+        setSelectedPark(park);
+        setShowParkDetails(true);
+      });
+      
+      parkMarkers.current.set(park.id, marker);
+    });
+  }, [truckParks, map.current]);
+
+  // Fetch nearby speed cameras when location changes
+  useEffect(() => {
+    if (!currentLocation) return;
+    
+    const fetchCameras = async () => {
+      try {
+        const response = await fetch(
+          `/api/speed-cameras/nearby?lat=${currentLocation[1]}&lon=${currentLocation[0]}&radius=10`
+        );
+        if (response.ok) {
+          const cameras = await response.json();
+          setSpeedCameras(cameras);
+        }
+      } catch (error) {
+        console.error('Error fetching speed cameras:', error);
+      }
+    };
+    
+    fetchCameras();
+  }, [currentLocation]);
+
+  // Calculate nearby POIs sorted by distance (TomTom-style sidebar)
+  useEffect(() => {
+    if (!currentLocation) {
+      setNearbyPOIs([]);
+      return;
+    }
+    
+    const pois: Array<{
+      type: 'truck_park' | 'speed_camera' | 'gas_station';
+      id: string;
+      name: string;
+      distance: number;
+      latitude: number;
+      longitude: number;
+      icon: string;
+    }> = [];
+    
+    // Add truck parks
+    truckParks.forEach(park => {
+      const dist = calculateDistance(
+        currentLocation[1], currentLocation[0],
+        park.latitude, park.longitude
+      );
+      pois.push({
+        type: 'truck_park',
+        id: park.id,
+        name: park.name,
+        distance: dist,
+        latitude: park.latitude,
+        longitude: park.longitude,
+        icon: 'truck'
+      });
+    });
+    
+    // Add gas stations (from Geoapify Places API)
+    gasStations.forEach(station => {
+      const dist = calculateDistance(
+        currentLocation[1], currentLocation[0],
+        station.latitude, station.longitude
+      );
+      pois.push({
+        type: 'gas_station',
+        id: station.id,
+        name: station.name,
+        distance: dist,
+        latitude: station.latitude,
+        longitude: station.longitude,
+        icon: 'fuel'
+      });
+    });
+    
+    // Add speed cameras (only nearby ones < 10km)
+    speedCameras.forEach(camera => {
+      const dist = calculateDistance(
+        currentLocation[1], currentLocation[0],
+        camera.latitude, camera.longitude
+      );
+      if (dist < 10) {  // Only show cameras within 10km
+        const cameraName = camera.type === 'mobile' ? 'Zona Radares' : 
+                           camera.type === 'fixed' ? 'Radar Fixo' :
+                           camera.type === 'redlight' ? 'Radar Semáforo' :
+                           'Radar Troço';
+        pois.push({
+          type: 'speed_camera',
+          id: camera.id,
+          name: cameraName,
+          distance: dist,
+          latitude: camera.latitude,
+          longitude: camera.longitude,
+          icon: 'camera'
+        });
+      }
+    });
+    
+    // Sort by distance and take only first 8
+    pois.sort((a, b) => a.distance - b.distance);
+    setNearbyPOIs(pois.slice(0, 8));
+  }, [currentLocation, truckParks, gasStations, speedCameras]);
+
+  // WebSocket connection for anonymous user presence
+  useEffect(() => {
+    // Connect to WebSocket server at /ws path (avoid Vite HMR conflict)
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    
+    ws.current = new WebSocket(wsUrl);
+    
+    ws.current.onopen = () => {
+      console.log('WebSocket connected');
+    };
+    
+    ws.current.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.type === 'user_positions') {
+          // Client-side validation: only accept positions ≥10 min old
+          const now = Date.now();
+          const DELAY_MS = 10 * 60 * 1000;
+          const validPositions = (message.positions || []).filter((pos: any) => 
+            pos.timestamp && (now - pos.timestamp) >= DELAY_MS
+          );
+          setAnonymousUsers(validPositions);
+        }
+      } catch (error) {
+        console.error('WebSocket message error:', error);
+      }
+    };
+    
+    ws.current.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+    
+    ws.current.onclose = () => {
+      console.log('WebSocket disconnected');
+    };
+    
+    // Cleanup on unmount
+    return () => {
+      if (ws.current) {
+        ws.current.close();
+      }
+    };
+  }, []);
+
+  // Send position updates to WebSocket when location changes
+  useEffect(() => {
+    if (!currentLocation || !tripActive || !ws.current || ws.current.readyState !== WebSocket.OPEN) return;
+    
+    const message = {
+      type: 'position_update',
+      userId: currentUserId || anonymousId, // Use stable anonymous ID (not Date.now()!)
+      vehicleType: selectedVehicle,
+      latitude: currentLocation[1],
+      longitude: currentLocation[0],
+      invisible: invisibleMode
+    };
+    
+    ws.current.send(JSON.stringify(message));
+  }, [currentLocation, tripActive, selectedVehicle, invisibleMode, currentUserId]);
+
+  // Render anonymous user markers on map (Waze-style icons)
+  useEffect(() => {
+    if (!mapLoaded || !map.current) return;
+    
+    // Remove old markers
+    userMarkers.current.forEach(marker => marker.remove());
+    userMarkers.current.clear();
+    
+    // Add markers for anonymous users
+    anonymousUsers.forEach((user, index) => {
+      const el = document.createElement('div');
+      el.className = 'anonymous-user-marker';
+      el.style.cursor = 'pointer';
+      el.style.width = '32px';
+      el.style.height = '32px';
+      
+      // Different icons based on vehicle type (Waze-style)
+      const iconColor = user.vehicleType === 'truck' ? '#10B981' : 
+                        user.vehicleType === 'motorcycle' ? '#F59E0B' : '#3B82F6';
+      
+      el.innerHTML = `
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="10" fill="${iconColor}" stroke="white" stroke-width="2" opacity="0.8"/>
+          ${user.vehicleType === 'truck' 
+            ? '<path d="M8 8h6v4l2 1v2h-2v-1H8v1H6v-2l2-1V8z" fill="white"/>'
+            : user.vehicleType === 'motorcycle'
+            ? '<path d="M10 8h4l1 4h-6l1-4zm-1 6h6v2h-6v-2z" fill="white"/>'
+            : '<path d="M8 10h8v4H8v-4zm1-2h6v1H9V8z" fill="white"/>'}
+        </svg>
+      `;
+      
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([user.longitude, user.latitude])
+        .addTo(map.current!);
+      
+      userMarkers.current.set(`user-${index}`, marker);
+    });
+  }, [anonymousUsers, mapLoaded]);
+
+  // RADARBOT: Render speed camera badges on map (Task 4) - Red circles with speed limit
+  useEffect(() => {
+    if (!mapLoaded || !map.current || !currentLocation) return;
+    
+    // Remove old camera markers
+    const oldCameraMarkers = userMarkers.current;
+    oldCameraMarkers.forEach((marker, key) => {
+      if (key.startsWith('camera-')) {
+        marker.remove();
+        oldCameraMarkers.delete(key);
+      }
+    });
+    
+    // Filter cameras within 10km radius
+    const nearbyCameras = speedCameras.filter(camera => {
+      const dist = calculateDistance(
+        currentLocation[1],
+        currentLocation[0],
+        camera.latitude,
+        camera.longitude
+      );
+      return dist <= 10; // 10km radius
+    });
+    
+    // Add markers for nearby cameras (Radarbot-style red badges)
+    nearbyCameras.forEach((camera) => {
+      const el = document.createElement('div');
+      el.className = 'camera-marker';
+      el.style.cursor = 'pointer';
+      el.style.width = '44px';
+      el.style.height = '44px';
+      
+      // Red circular badge with speed limit (RADARBOT STYLE!)
+      el.innerHTML = `
+        <div style="
+          width: 44px;
+          height: 44px;
+          border-radius: 50%;
+          background: #DC2626;
+          border: 3px solid white;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          font-weight: 900;
+          color: white;
+        ">
+          <div style="font-size: 9px; line-height: 1;">📷</div>
+          <div style="font-size: 16px; line-height: 1; margin-top: 1px;">${camera.speedLimit}</div>
+        </div>
+      `;
+      
+      // Click to show camera details
+      el.addEventListener('click', () => {
+        toast({
+          title: `Radar ${camera.type === 'fixed' ? 'Fixo' : 'Móvel'}`,
+          description: `Limite: ${camera.speedLimit} km/h • ${calculateDistance(
+            currentLocation[1],
+            currentLocation[0],
+            camera.latitude,
+            camera.longitude
+          ).toFixed(2)} km de distância`,
+        });
+      });
+      
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([camera.longitude, camera.latitude])
+        .addTo(map.current!);
+      
+      userMarkers.current.set(`camera-${camera.id}`, marker);
+    });
+  }, [mapLoaded, currentLocation, speedCameras]);
+
+  // Check for speed cameras on every location update
+  useEffect(() => {
+    if (!currentLocation || !tripActive) return;
+    checkSpeedCameras(currentLocation);
+  }, [currentLocation, speed, tripActive, speedCameras]);
+
+  // Auto dark mode based on time
+  useEffect(() => {
+    const hour = new Date().getHours();
+    const shouldBeDark = hour < 6 || hour >= 20; // 8 PM to 6 AM
+    setDarkMode(shouldBeDark);
+    
+    // CRITICAL FIX: Only switch to Geoapify styles if API key exists!
+    // Otherwise keep OpenStreetMap raster tiles (NO API KEY NEEDED!)
+    if (map.current && map.current.isStyleLoaded() && hasGeoapifyKey) {
+      console.log('[ROADMATE] Switching to Geoapify style (dark mode available)');
+      try {
+        const style = shouldBeDark 
+          ? `https://maps.geoapify.com/v1/styles/dark-matter/style.json?apiKey=${geoapifyKey}`
+          : `https://maps.geoapify.com/v1/styles/osm-bright/style.json?apiKey=${geoapifyKey}`;
+        map.current.setStyle(style);
+      } catch (err) {
+        console.error('[ROADMATE] Failed to switch map style:', err);
+      }
+    } else if (map.current && !hasGeoapifyKey) {
+      console.log('[ROADMATE] Keeping OpenStreetMap tiles (no Geoapify API key)');
+    }
+  }, [geoapifyKey, hasGeoapifyKey]);
+
+  // Initialize GPS - SEPARATE from map so GPS works even if map fails!
+  useEffect(() => {
+    console.log('[ROADMATE] Initializing GPS...');
+    
+    if (!('geolocation' in navigator)) {
+      console.error('[ROADMATE] Geolocation not supported');
+      setGpsError("Geolocalização não suportada neste dispositivo");
+      toast({
+        title: "GPS Não Suportado",
+        description: "Este dispositivo não suporta GPS",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        console.log('[ROADMATE] GPS position acquired:', position.coords.latitude, position.coords.longitude);
+        const coords: [number, number] = [
+          position.coords.longitude,
+          position.coords.latitude
+        ];
+        setCurrentLocation(coords);
+        setGpsReady(true);
+        setGpsError(null);
+        
+        // If map is ready, center on user (RADARBOT-STYLE: zoom 15 for close-up view)
+        if (map.current && map.current.isStyleLoaded()) {
+          map.current.flyTo({ center: coords, zoom: 15 });
+          
+          if (userMarker.current) {
+            userMarker.current.setLngLat(coords);
+          } else {
+            userMarker.current = new maplibregl.Marker({
+              color: '#2D5BFF',
+              scale: 1.2
+            })
+              .setLngLat(coords)
+              .addTo(map.current);
+          }
+        }
+
+        toast({
+          title: "GPS Ativo",
+          description: "Localização encontrada! Podes iniciar viagem.",
+        });
+      },
+      (error) => {
+        console.error('[ROADMATE] GPS Error:', error);
+        setGpsError(error.message);
+        setGpsReady(false);
+        toast({
+          title: "GPS Desativado",
+          description: "Ativa a localização para usar o GPS real",
+          variant: "destructive"
+        });
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
+    );
+  }, [toast]);
+
+  // Initialize map - SEPARATE from GPS! Using OpenStreetMap (NO API KEY!)
+  useEffect(() => {
+    console.log('[ROADMATE] 🗺️ Map useEffect FIRED!');
+    
+    if (currentScreen !== 'map' || map.current || !mapContainer.current) {
+      console.log('[ROADMATE] ⏭️ Skipping map init');
+      return;
+    }
+
+    console.log('[ROADMATE] 🚀 Initializing map with OpenStreetMap...');
+
+    try {
+      console.log('[ROADMATE] Creating MapLibre map...');
+      
+      // OpenStreetMap DIRECT = FASTEST POSSIBLE! 🚀🚀🚀
+      // - No API key needed (zero auth latency!)
+      // - Global CDN (tile.openstreetmap.org)
+      // - Battle-tested by millions of apps
+      const rasterStyle = {
+        version: 8,
+        sources: {
+          'osm-raster': {
+            type: 'raster',
+            tiles: [
+              'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+            ],
+            tileSize: 256,
+            attribution: '© OpenStreetMap contributors'
+          }
+        },
+        layers: [
+          {
+            id: 'osm-raster-layer',
+            type: 'raster',
+            source: 'osm-raster',
+            minzoom: 0,
+            maxzoom: 19
+          }
+        ]
+      };
+      
+      // Start centered on user location if GPS ready, otherwise Europe center
+      const initialCenter = currentLocation || [9.1900, 48.7758];
+      const initialZoom = currentLocation ? 15 : 6; // Zoom in if we have GPS!
+      
+      map.current = new maplibregl.Map({
+        container: mapContainer.current,
+        style: rasterStyle as any,
+        center: initialCenter,
+        zoom: initialZoom,
+        attributionControl: false,
+        maxTileCacheSize: 50,
+      });
+
+      map.current.on('load', () => {
+        console.log('[ROADMATE] ✅ Map loaded!');
+        setMapLoaded(true);
+        setMapError(null);
+        
+        // If we already have GPS location, add blue marker at user position
+        if (currentLocation) {
+          console.log('[ROADMATE] 📍 Adding user marker at GPS position');
+          userMarker.current = new maplibregl.Marker({
+            color: '#2D5BFF', // Blue marker like Waze!
+            scale: 1.5 // Bigger so user can see easily
+          })
+            .setLngLat(currentLocation)
+            .addTo(map.current!);
+        }
+      });
+
+      map.current.on('error', (e) => {
+        console.error('[ROADMATE] ❌ Map error:', e);
+        setMapError('Erro ao carregar mapa');
+      });
+
+      // Add attribution control (required by OpenStreetMap)
+      map.current.addControl(new maplibregl.AttributionControl({
+        compact: true
+      }), 'bottom-left');
+      
+      // Add navigation controls (zoom +/-)
+      map.current.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+    } catch (error: any) {
+      console.error('[ROADMATE] Map init error:', error);
+      setMapError(error?.message || 'Erro ao inicializar mapa');
+    }
+    
+    return () => {
+      if (map.current) {
+        map.current.remove();
+        map.current = null;
+      }
+    };
+  }, [currentScreen]);
+
+  // Track location ALWAYS (like Waze!) - not just during trip
+  useEffect(() => {
+    if (mapLoaded && gpsReady && 'geolocation' in navigator) {
+      console.log('[ROADMATE] 🎯 Starting GPS tracking (real-time cursor movement)');
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (position) => {
+          const coords: [number, number] = [
+            position.coords.longitude,
+            position.coords.latitude
+          ];
+          
+          // If trip active, check route and calculate distance
+          if (tripActive) {
+            checkAndRecalculateRoute(coords);
+            
+            // Calculate real distance using GPS coordinates
+            if (previousLocation) {
+              const distanceDelta = calculateDistance(
+                previousLocation[1],
+                previousLocation[0],
+                coords[1],
+                coords[0]
+              );
+              
+              // Only update if moved at least 10 meters (avoid GPS jitter)
+              if (distanceDelta > 0.01) {
+                setDistance((prev) => prev + distanceDelta);
+                setPreviousLocation(coords);
+              }
+            } else {
+              setPreviousLocation(coords);
+            }
+          }
+          
+          setCurrentLocation(coords);
+          
+          // Get speed from GPS (m/s) and convert to km/h
+          const gpsSpeed = position.coords.speed;
+          if (gpsSpeed !== null && gpsSpeed !== undefined) {
+            setSpeed(gpsSpeed * 3.6); // Convert m/s to km/h (includes 0 for stopped)
+          } else {
+            setSpeed(0); // Reset to 0 when GPS doesn't provide speed
+          }
+
+          // Update marker and center map on user position (LIKE WAZE!)
+          if (userMarker.current && map.current) {
+            userMarker.current.setLngLat(coords);
+            map.current.panTo(coords, { duration: 1000 }); // Smooth pan with 1s animation
+          }
+        },
+        (error) => {
+          console.error('GPS tracking error:', error);
+          toast({
+            title: "Erro GPS",
+            description: "Problema ao rastrear localização",
+            variant: "destructive"
+          });
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 5000
+        }
+      );
+    }
+
+    return () => {
+      if (watchIdRef.current !== null) {
+        console.log('[ROADMATE] 🛑 Stopping GPS tracking');
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+    };
+  }, [mapLoaded, gpsReady, tripActive, toast]); // Track whenever map/GPS ready!
+
+  const getGeoapifyMode = (vehicle: VehicleType): string => {
+    switch (vehicle) {
+      case 'car': return 'drive';
+      case 'motorcycle': return 'motorcycle';
+      case 'truck': return 'truck';
+      default: return 'drive';
+    }
+  };
+
+  // Search for places
+  const searchPlaces = async (query: string) => {
+    if (!query || query.length < 3) return;
+    
+    const apiKey = import.meta.env.VITE_GEOAPIFY_API_KEY;
+    
+    try {
+      const response = await fetch(
+        `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(query)}&apiKey=${apiKey}&filter=countrycode:pt,es,fr,de,it,nl,be,at,ch&limit=5`
+      );
+      
+      const data = await response.json();
+      setSearchResults(data.features || []);
+    } catch (error) {
+      console.error('Search error:', error);
+    }
+  };
+
+  // Calculate route with turn-by-turn instructions
+  const calculateRoute = async (destCoords: [number, number]) => {
+    if (!currentLocation) {
+      toast({
+        title: "GPS não disponível",
+        description: "Aguarda pela localização GPS",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const mode = getGeoapifyMode(selectedVehicle);
+    const apiKey = import.meta.env.VITE_GEOAPIFY_API_KEY;
+    
+    // Truck-specific parameters (European standard truck dimensions)
+    let truckParams = '';
+    if (selectedVehicle === 'truck') {
+      truckParams = [
+        'vehicleHeight=4.0',      // 4.0m height (avoids low bridges)
+        'vehicleWeight=18000',    // 18 tons (typical loaded truck)
+        'vehicleLength=12.5',     // 12.5m (articulated truck)
+        'vehicleWidth=2.55',      // 2.55m (EU max width)
+        'vehicleAxleWeight=9000'  // 9 tons per axle
+      ].map(p => `&${p}`).join('');
+    }
+    
+    try {
+      const response = await fetch(
+        `https://api.geoapify.com/v1/routing?waypoints=${currentLocation[1]},${currentLocation[0]}|${destCoords[1]},${destCoords[0]}&mode=${mode}&details=instruction_details${truckParams}&apiKey=${apiKey}`
+      );
+      
+      const data = await response.json();
+      
+      if (data.features && data.features[0]) {
+        const route = data.features[0];
+        const routeDistance = (route.properties.distance / 1000).toFixed(1);
+        const routeTime = Math.round(route.properties.time / 60);
+        
+        setDestination(destCoords);
+        setEta(`${routeTime} min`);
+        
+        // Extract turn-by-turn instructions
+        const instructions = route.properties.legs[0]?.steps || [];
+        setRouteInstructions(instructions);
+        if (instructions.length > 0) {
+          const firstInstruction = instructions[0].instruction?.text || 'Siga em frente';
+          setCurrentInstruction(firstInstruction);
+          speak(firstInstruction);
+        }
+        
+        // Draw route on map
+        if (map.current) {
+          // Defensive check: ensure coordinates exist and are valid
+          if (!route.geometry?.coordinates || 
+              (Array.isArray(route.geometry.coordinates) && route.geometry.coordinates.length === 0)) {
+            console.error('[ROADMATE] Invalid route geometry - no coordinates');
+            toast({
+              title: "Erro de Rota",
+              description: "A rota não contém coordenadas válidas.",
+              variant: "destructive"
+            });
+            return;
+          }
+
+          // Geoapify can return LineString or MultiLineString - normalize to [lng, lat][] tuples
+          const coordinates: [number, number][] = route.geometry.type === 'MultiLineString'
+            ? (route.geometry.coordinates as [number, number][][]).flatMap(segment => segment)
+            : route.geometry.coordinates as [number, number][];
+          
+          // Final check: ensure we have at least 2 points for a valid route
+          if (coordinates.length < 2) {
+            console.error('[ROADMATE] Invalid route - need at least 2 coordinate points');
+            toast({
+              title: "Erro de Rota",
+              description: "A rota não contém pontos suficientes.",
+              variant: "destructive"
+            });
+            return;
+          }
+
+          // Store geometry for off-route detection
+          setRouteGeometry(coordinates);
+          
+          // Helper to add route layer
+          const addRouteLayers = () => {
+            if (!map.current || !map.current.isStyleLoaded()) return;
+            
+            // Remove existing route layer safely
+            if (map.current.getLayer('route')) {
+              map.current.removeLayer('route');
+            }
+            if (map.current.getSource('route')) {
+              map.current.removeSource('route');
+            }
+
+            // Add route source and layer
+            map.current.addSource('route', {
+              type: 'geojson',
+              data: {
+                type: 'Feature',
+                properties: {},
+                geometry: {
+                  type: 'LineString',
+                  coordinates: coordinates
+                }
+              }
+            });
+
+            // RADARBOT-STYLE: Thick blue route line (Task 7)
+            map.current.addLayer({
+              id: 'route',
+              type: 'line',
+              source: 'route',
+              layout: {
+                'line-join': 'round',
+                'line-cap': 'round'
+              },
+              paint: {
+                'line-color': '#1E40AF', // Darker blue like Radarbot
+                'line-width': 10,          // THICK line (was 6)
+                'line-opacity': 0.9        // More solid
+              }
+            });
+          };
+          
+          // Add layers immediately
+          addRouteLayers();
+          routeLayer.current = 'route';
+          
+          // Store function to re-add layers after style change
+          (window as any).__roadmateRestoreLayers = addRouteLayers;
+          
+          // Add destination marker
+          if (destinationMarker.current) {
+            destinationMarker.current.remove();
+          }
+          destinationMarker.current = new maplibregl.Marker({ color: '#FF0000' })
+            .setLngLat(destCoords)
+            .addTo(map.current);
+
+          // Fit map to show entire route
+          const bounds = new maplibregl.LngLatBounds();
+          bounds.extend(currentLocation);
+          bounds.extend(destCoords);
+          map.current.fitBounds(bounds, { padding: 100 });
+
+          toast({
+            title: "Rota Calculada",
+            description: `${routeDistance} km • ${routeTime} min`,
+          });
+          
+          setShowSearch(false);
+        }
+      }
+    } catch (error) {
+      console.error('Routing error:', error);
+      toast({
+        title: "Erro no Routing",
+        description: "Não foi possível calcular a rota",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const startTrip = () => {
+    if (!gpsReady || !currentLocation) {
+      toast({
+        title: "GPS Não Disponível",
+        description: "Aguarda pela localização GPS antes de iniciar",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    setTripActive(true);
+    setDistance(0);
+    setPreviousLocation(currentLocation);
+    toast({
+      title: "Viagem Iniciada",
+      description: "GPS ativo - A ganhar XP por cada km",
+    });
+  };
+
+  const endTrip = () => {
+    setTripActive(false);
+    const earnedXP = Math.floor(distance * 10);
+    setXp(xp + earnedXP);
+    setPreviousLocation(null);
+    
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    
+    toast({
+      title: "Viagem Completa",
+      description: `${distance.toFixed(1)} km percorridos • ${earnedXP} XP ganhos!`,
+    });
+  };
+
+  const MapScreen = () => (
+    <div style={{ width: '100vw', height: '100vh', margin: 0, padding: 0 }}>
+      <div ref={mapContainer} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}>
+        {/* Loading/Error States */}
+        {!mapLoaded && !mapError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
+            <div className="text-center px-4">
+              <Navigation className="w-12 h-12 mx-auto mb-3 text-primary animate-spin" />
+              <p className="text-lg font-semibold mb-2">A carregar mapa...</p>
+              <p className="text-sm text-gray-600 mb-4">Pode demorar 10-30s no mobile</p>
+              <Button 
+                onClick={() => {
+                  setMapLoaded(true);
+                  setMapError(null);
+                  toast({
+                    title: "Modo GPS Ativo",
+                    description: "Navegação sem mapa visual. GPS e instruções funcionam normalmente!",
+                  });
+                }}
+                variant="outline"
+                data-testid="button-skip-map"
+              >
+                Continuar sem Mapa (Modo GPS)
+              </Button>
+            </div>
+          </div>
+        )}
+        {mapError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-100 p-4">
+            <div className="text-center max-w-sm">
+              <AlertTriangle className="w-12 h-12 mx-auto mb-3 text-destructive" />
+              <p className="text-lg font-semibold mb-2">Erro no Mapa</p>
+              <p className="text-sm text-gray-600 mb-4">{mapError}</p>
+              <Button onClick={() => window.location.reload()}>
+                Recarregar
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Search Interface */}
+      {showSearch && (
+        <div className="absolute top-4 left-4 right-4 bg-white/95 backdrop-blur-sm rounded-lg shadow-lg p-3 z-50">
+          <div className="flex gap-2 mb-2">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  searchPlaces(e.target.value);
+                }}
+                placeholder="Procurar destino..."
+                className="pl-10"
+                autoFocus
+                data-testid="input-search-destination"
+              />
+            </div>
+            <Button size="icon" variant="outline" onClick={() => setShowSearch(false)}>
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+          {searchResults.length > 0 && (
+            <div className="space-y-1 max-h-60 overflow-auto">
+              {searchResults.map((result, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    const coords: [number, number] = [
+                      result.properties.lon,
+                      result.properties.lat
+                    ];
+                    calculateRoute(coords);
+                  }}
+                  className="w-full text-left p-3 hover:bg-gray-100 rounded-md transition-colors"
+                  data-testid={`search-result-${idx}`}
+                >
+                  <p className="font-semibold text-sm">{result.properties.name || result.properties.formatted}</p>
+                  <p className="text-xs text-gray-500">{result.properties.country}</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* RADARBOT-STYLE Navigation Card (Top) - Task 1 */}
+      {currentInstruction && destination && (
+        <Card className="absolute top-4 left-4 right-4 p-6 bg-white/98 dark:bg-gray-900/98 backdrop-blur-md shadow-2xl border-2 border-gray-200 dark:border-gray-700 rounded-2xl" data-testid="card-navigation-instruction">
+          <div className="flex items-center gap-4">
+            {/* Big Blue Arrow Icon */}
+            <div className="flex-shrink-0 bg-blue-500 rounded-full p-4 shadow-lg">
+              <ArrowUp className="w-10 h-10 text-white" style={{ transform: 'rotate(45deg)' }} />
+            </div>
+            
+            {/* Instruction Text */}
+            <div className="flex-1">
+              <p className="text-2xl font-black text-blue-600 dark:text-blue-400 mb-1">
+                Mantenha-se à direita
+              </p>
+              <p className="text-lg text-gray-700 dark:text-gray-300 font-semibold">
+                {currentInstruction}
+              </p>
+            </div>
+            
+            {/* Distance to Maneuver */}
+            <div className="flex-shrink-0 text-right">
+              <p className="text-4xl font-black text-gray-900 dark:text-white">104</p>
+              <p className="text-sm text-gray-600 dark:text-gray-400 font-bold">Km</p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* RADARBOT Circular Speedometer (Bottom Left) - Task 2 */}
+      {mapLoaded && (
+        <div className="absolute bottom-24 left-4 z-30" data-testid="speedometer-container">
+          {/* Circular Speedometer Background */}
+          <div className="relative w-32 h-32 rounded-full bg-gradient-to-br from-green-400 to-green-600 shadow-2xl flex items-center justify-center border-4 border-white dark:border-gray-800">
+            {/* Speed Value */}
+            <div className="text-center">
+              <p className="text-5xl font-black text-white leading-none">{Math.round(speed)}</p>
+              <p className="text-xs font-bold text-white/90 mt-1">km/h</p>
+            </div>
+          </div>
+          
+          {/* Speed Limit Badge (Next to Speedometer) */}
+          {nearbyCamera && (
+            <div className="absolute -right-16 top-1/2 -translate-y-1/2 w-16 h-16 rounded-full bg-red-600 border-4 border-white dark:border-gray-800 shadow-xl flex items-center justify-center" data-testid="speed-limit-badge">
+              <div className="text-center">
+                <p className="text-2xl font-black text-white">{nearbyCamera.speedLimit}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      
+      {/* RADARBOT Radar Card (Bottom Left, under speedometer) - Task 3 + 8 PULSING */}
+      {nearbyCamera && currentLocation && (
+        <Card className="absolute bottom-60 left-4 z-30 w-48 p-4 bg-white/98 dark:bg-gray-900/98 backdrop-blur-md shadow-2xl border-2 border-red-500 animate-pulse" data-testid="card-radar-warning">
+          <p className="text-sm font-black text-red-600 mb-3 text-center">RADAR FIXO</p>
+          
+          {/* Mini Speedometer in Card */}
+          <div className="flex items-center justify-center gap-3 mb-3">
+            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center border-2 border-green-700">
+              <p className="text-2xl font-black text-white">{Math.round(speed)}</p>
+            </div>
+            <div className="w-12 h-12 rounded-full bg-red-600 border-2 border-red-700 flex items-center justify-center">
+              <p className="text-lg font-black text-white">{nearbyCamera.speedLimit}</p>
+            </div>
+          </div>
+          
+          {/* Distance Progress Bar */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold">📷 {calculateDistance(
+                currentLocation[1],
+                currentLocation[0],
+                nearbyCamera.latitude,
+                nearbyCamera.longitude
+              ) < 1 
+                ? `${Math.round(calculateDistance(currentLocation[1], currentLocation[0], nearbyCamera.latitude, nearbyCamera.longitude) * 1000)}m`
+                : `${calculateDistance(currentLocation[1], currentLocation[0], nearbyCamera.latitude, nearbyCamera.longitude).toFixed(1)}km`
+              }</span>
+            </div>
+            <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-600" style={{ width: '60%' }} />
+            </div>
+          </div>
+        </Card>
+      )}
+      
+      {/* RADARBOT Floating Buttons (Right Side) - Task 5 */}
+      <div className="absolute top-1/2 -translate-y-1/2 right-4 flex flex-col gap-3 z-30" data-testid="floating-buttons">
+        {/* Sound Button */}
+        <button
+          onClick={() => setVoiceEnabled(!voiceEnabled)}
+          className="w-14 h-14 rounded-full bg-white dark:bg-gray-800 shadow-2xl flex items-center justify-center border-2 border-gray-200 dark:border-gray-700 hover-elevate active-elevate-2"
+          data-testid="button-toggle-voice"
+        >
+          {voiceEnabled ? <Volume2 className="w-6 h-6 text-blue-600" /> : <VolumeX className="w-6 h-6 text-gray-400" />}
+        </button>
+        
+        {/* Menu Button (3 dots) */}
+        <button
+          onClick={() => setCurrentScreen('profile')}
+          className="w-14 h-14 rounded-full bg-white dark:bg-gray-800 shadow-2xl flex items-center justify-center border-2 border-gray-200 dark:border-gray-700 hover-elevate active-elevate-2"
+          data-testid="button-menu"
+        >
+          <span className="text-2xl text-gray-700 dark:text-gray-300">⋮</span>
+        </button>
+        
+        {/* Zoom + Button */}
+        {!destination && !showSearch && (
+          <button
+            onClick={() => setShowSearch(true)}
+            className="w-14 h-14 rounded-full bg-blue-600 shadow-2xl flex items-center justify-center border-2 border-blue-700 hover-elevate active-elevate-2"
+            data-testid="button-open-search"
+          >
+            <Search className="w-6 h-6 text-white" />
+          </button>
+        )}
+        
+        {/* Invisible Mode Button */}
+        <button
+          onClick={() => setInvisibleMode(!invisibleMode)}
+          className="w-14 h-14 rounded-full bg-white dark:bg-gray-800 shadow-2xl flex items-center justify-center border-2 border-gray-200 dark:border-gray-700 hover-elevate active-elevate-2"
+          data-testid="button-toggle-invisible"
+          title={invisibleMode ? 'Visível no Mapa' : 'Invisível no Mapa'}
+        >
+          {invisibleMode ? <User className="w-5 h-5 text-gray-400 opacity-50" /> : <User className="w-5 h-5 text-blue-600" />}
+        </button>
+      </div>
+      
+      {/* RADARBOT Bottom Info Bar (ETA + Distance) - Task 6 */}
+      {destination && eta && (
+        <div className="absolute bottom-20 left-4 right-4 z-30" data-testid="bottom-info-bar">
+          <Card className="p-4 bg-white/98 dark:bg-gray-900/98 backdrop-blur-md shadow-2xl border-2 border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between">
+              {/* Menu Icon (3 lines) */}
+              <button className="p-2" data-testid="button-expand-menu">
+                <span className="text-xl text-gray-700 dark:text-gray-300">☰</span>
+              </button>
+              
+              {/* ETA (GREEN) */}
+              <div className="flex-1 text-center">
+                <p className="text-3xl font-black text-green-600">
+                  {eta}
+                </p>
+                <p className="text-xs text-gray-600 dark:text-gray-400 font-semibold mt-1">
+                  {distance.toFixed(0)} Km | {new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+              
+              {/* Navigation Refresh Icon */}
+              <button 
+                className="p-2"
+                onClick={() => {
+                  if (destination && currentLocation) {
+                    calculateRoute(destination);
+                    toast({
+                      title: "Rota recalculada",
+                      description: "A verificar tráfego atual...",
+                    });
+                  }
+                }}
+                data-testid="button-recalculate-route"
+              >
+                <Navigation className="w-6 h-6 text-blue-600" />
+              </button>
+              
+              {/* Close Button */}
+              <button 
+                className="p-2"
+                onClick={() => {
+                  setDestination(null);
+                  setCurrentInstruction(null);
+                  setEta(null);
+                  if (destinationMarker.current) {
+                    destinationMarker.current.remove();
+                    destinationMarker.current = null;
+                  }
+                  toast({
+                    title: "Navegação cancelada",
+                  });
+                }}
+                data-testid="button-stop-navigation"
+              >
+                <X className="w-6 h-6 text-red-600" />
+              </button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Vehicle Selector */}
+      <div className="absolute top-28 left-4 right-4 flex gap-2">
+        <Button
+          data-testid="button-vehicle-car"
+          variant={selectedVehicle === 'car' ? 'default' : 'outline'}
+          size="sm"
+          className="flex-1"
+          onClick={() => setSelectedVehicle('car')}
+          disabled={tripActive}
+        >
+          <Car className="w-4 h-4 mr-1" />
+          Carro
+        </Button>
+        <Button
+          data-testid="button-vehicle-motorcycle"
+          variant={selectedVehicle === 'motorcycle' ? 'default' : 'outline'}
+          size="sm"
+          className="flex-1"
+          onClick={() => setSelectedVehicle('motorcycle')}
+          disabled={tripActive}
+        >
+          <Bike className="w-4 h-4 mr-1" />
+          Moto
+        </Button>
+        <Button
+          data-testid="button-vehicle-truck"
+          variant={selectedVehicle === 'truck' ? 'default' : 'outline'}
+          size="sm"
+          className="flex-1"
+          onClick={() => setSelectedVehicle('truck')}
+          disabled={tripActive}
+        >
+          <Truck className="w-4 h-4 mr-1" />
+          Camião
+        </Button>
+      </div>
+
+      {/* TomTom-Style HUD Overlay - Speedometer (Bottom-Left) */}
+      {tripActive && gpsReady && (
+        <div className="absolute bottom-24 left-4 z-40" data-testid="speedometer-hud">
+          <div className="bg-black/70 backdrop-blur-md rounded-2xl p-4 border-2 border-white/20 shadow-2xl">
+            <div className="text-center">
+              {/* Current Speed - Large */}
+              <div className="text-white text-6xl font-extrabold leading-none mb-1" data-testid="text-current-speed">
+                {Math.round(speed)}
+              </div>
+              <div className="text-white/70 text-sm font-medium mb-3">km/h</div>
+              
+              {/* Speed Limit Badge */}
+              {nearbyCamera && (
+                <div className="flex items-center justify-center gap-2">
+                  <div className="bg-red-600 rounded-full w-14 h-14 flex items-center justify-center border-4 border-white shadow-lg">
+                    <span className="text-white text-xl font-black" data-testid="text-speed-limit">
+                      {nearbyCamera.speedLimit}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TomTom-Style ETA Display (Top-Right) */}
+      {tripActive && destination && eta && (
+        <div className="absolute top-20 right-4 z-40" data-testid="eta-display">
+          <div className="bg-black/70 backdrop-blur-md rounded-xl px-4 py-3 border-2 border-white/20 shadow-xl">
+            <div className="text-white text-right">
+              <div className="text-2xl font-bold" data-testid="text-eta-time">
+                {(() => {
+                  const minutes = parseInt(eta.replace(' min', ''));
+                  if (isNaN(minutes)) return '--:--';
+                  const arrivalTime = new Date(Date.now() + minutes * 60000);
+                  return arrivalTime.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+                })()}
+              </div>
+              <div className="text-sm text-white/70" data-testid="text-eta-duration">
+                {eta}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Timeline - Next Events (Right Side) - TomTom Style */}
+      {tripActive && (routeInstructions.length > 0 || nearbyCamera) && (
+        <div className="absolute top-44 right-4 z-30 space-y-2" data-testid="timeline-events">
+          {/* Next Navigation Instruction */}
+          {currentInstruction && (
+            <div className="bg-black/70 backdrop-blur-md rounded-xl p-3 border-2 border-blue-500/50 shadow-xl max-w-[200px]">
+              <div className="flex items-center gap-3">
+                <div className="bg-blue-600 rounded-full w-10 h-10 flex items-center justify-center">
+                  <ArrowUp className="w-6 h-6 text-white" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-white text-sm font-bold truncate">
+                    {routeInstructions[0]?.distance ? `${Math.round(routeInstructions[0].distance)}m` : ''}
+                  </div>
+                  <div className="text-white/70 text-xs truncate">
+                    {currentInstruction.split(' ').slice(0, 4).join(' ')}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Nearby Speed Camera */}
+          {nearbyCamera && (
+            <div className="bg-black/70 backdrop-blur-md rounded-xl p-3 border-2 border-red-500/50 shadow-xl max-w-[200px]">
+              <div className="flex items-center gap-3">
+                <div className="bg-red-600 rounded-full w-10 h-10 flex items-center justify-center">
+                  <AlertTriangle className="w-6 h-6 text-white" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-white text-sm font-bold">
+                    {currentLocation && Math.round(calculateDistance(
+                      currentLocation[1], 
+                      currentLocation[0], 
+                      nearbyCamera.latitude, 
+                      nearbyCamera.longitude
+                    ) * 1000)}m
+                  </div>
+                  <div className="text-white/70 text-xs truncate">
+                    {nearbyCamera.type === 'fixed' && 'Radar Fixo'}
+                    {nearbyCamera.type === 'mobile' && 'Zona Radares'}
+                    {nearbyCamera.type === 'redlight' && 'Semáforo'}
+                    {nearbyCamera.type === 'section' && 'Radar Troço'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Large Navigation Arrow - TomTom Style (when close to turn) */}
+      {tripActive && currentInstruction && routeInstructions[0]?.distance && routeInstructions[0].distance < 500 && (
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 z-30" data-testid="navigation-arrow">
+          <div className="bg-black/80 backdrop-blur-md rounded-3xl p-6 border-4 border-blue-500 shadow-2xl">
+            <div className="text-center">
+              <ArrowUp className="w-24 h-24 text-blue-400 mx-auto mb-2" />
+              <div className="text-white text-3xl font-extrabold mb-1">
+                {Math.round(routeInstructions[0].distance)}m
+              </div>
+              <div className="text-white/80 text-sm max-w-[200px]">
+                {currentInstruction.split(' ').slice(0, 6).join(' ')}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Trip Controls */}
+      <div className="absolute bottom-4 left-4 right-4">
+        {!tripActive ? (
+          <Button
+            data-testid="button-start-trip"
+            size="lg"
+            className="w-full h-14 text-lg font-bold"
+            onClick={startTrip}
+            disabled={!gpsReady}
+          >
+            <Play className="w-6 h-6 mr-2" />
+            {gpsReady ? 'Iniciar Viagem' : 'A procurar GPS...'}
+          </Button>
+        ) : (
+          <Button
+            data-testid="button-end-trip"
+            size="lg"
+            variant="destructive"
+            className="w-full h-14 text-lg font-bold"
+            onClick={endTrip}
+          >
+            <Square className="w-6 h-6 mr-2" />
+            Terminar Viagem
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
+  const ProfileScreen = () => {
+    const currentLevel = Math.floor(xp / 1000);
+    const xpInLevel = xp % 1000;
+    const nextLevelXP = (currentLevel + 1) * 1000;
+
+    return (
+      <div className="p-4 space-y-4 overflow-auto pb-20">
+        <Card className="p-6 text-center bg-gradient-to-br from-primary/10 via-primary/5 to-transparent">
+          <User className="w-16 h-16 mx-auto mb-3 text-primary" />
+          <h2 className="text-2xl font-bold mb-1">{currentUsername || 'Guest'}</h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Motorista {selectedVehicle === 'truck' ? 'Camionista' : 'Profissional'}</p>
+          
+          <div className="mb-4">
+            <div className="flex justify-between text-sm mb-2">
+              <span className="font-semibold">Nível {currentLevel}</span>
+              <span className="text-gray-600 dark:text-gray-400">{xp} / {nextLevelXP} XP</span>
+            </div>
+            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
+              <div 
+                className="bg-gradient-to-r from-primary to-primary/80 h-3 rounded-full transition-all duration-700 ease-out"
+                style={{ width: `${(xpInLevel / 1000) * 100}%` }}
+              />
+            </div>
+          </div>
+        </Card>
+
+        <div className="grid grid-cols-3 gap-3">
+          <Card className="p-4 text-center hover-elevate">
+            <MapPin className="w-8 h-8 mx-auto mb-2 text-blue-600 dark:text-blue-400" />
+            <p className="text-2xl font-bold">{distance.toFixed(1)}</p>
+            <p className="text-xs text-gray-600 dark:text-gray-400">Total km</p>
+          </Card>
+          <Card className="p-4 text-center hover-elevate">
+            <Navigation className="w-8 h-8 mx-auto mb-2 text-green-600 dark:text-green-400" />
+            <p className="text-2xl font-bold">{tripActive ? '1' : '0'}</p>
+            <p className="text-xs text-gray-600 dark:text-gray-400">Viagens</p>
+          </Card>
+          <Card className="p-4 text-center hover-elevate">
+            <Flag className="w-8 h-8 mx-auto mb-2 text-orange-600 dark:text-orange-400" />
+            <p className="text-2xl font-bold">0</p>
+            <p className="text-xs text-gray-600 dark:text-gray-400">Países</p>
+          </Card>
+        </div>
+
+        <Card className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Trophy className="w-5 h-5 text-primary" />
+            <h3 className="font-bold">Badges Desbloqueados</h3>
+            <Badge variant="outline" className="ml-auto">
+              {userBadges.length}
+            </Badge>
+          </div>
+          {userBadges.length > 0 ? (
+            <div className="grid grid-cols-2 gap-2">
+              {userBadges.map((userBadge: any, idx: number) => (
+                <div 
+                  key={idx}
+                  className="flex items-center gap-2 p-2 rounded-lg bg-gradient-to-br from-primary/10 to-transparent hover-elevate"
+                  data-testid={`badge-${idx}`}
+                >
+                  <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
+                    <Award className="w-5 h-5 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate">{userBadge.badge?.name || 'Badge'}</p>
+                    <p className="text-xs text-gray-600 dark:text-gray-400">+{userBadge.badge?.xpReward || 0} XP</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-center text-gray-500 py-4">
+              Nenhum badge desbloqueado ainda. Complete viagens para ganhar badges!
+            </p>
+          )}
+        </Card>
+      </div>
+    );
+  };
+
+  const LeaderboardScreen = () => {
+    const getTrophyColor = (position: number) => {
+      if (position === 1) return 'text-yellow-500 dark:text-yellow-400';
+      if (position === 2) return 'text-gray-400 dark:text-gray-300';
+      if (position === 3) return 'text-orange-600 dark:text-orange-400';
+      return 'text-primary';
+    };
+
+    const getTrophyGradient = (position: number) => {
+      if (position === 1) return 'from-yellow-500/20 to-yellow-500/5';
+      if (position === 2) return 'from-gray-400/20 to-gray-400/5';
+      if (position === 3) return 'from-orange-600/20 to-orange-600/5';
+      return 'from-primary/10 to-transparent';
+    };
+
+    return (
+      <div className="p-4 space-y-4 overflow-auto pb-20">
+        <Card className="p-6 text-center bg-gradient-to-br from-yellow-500/10 via-orange-500/10 to-transparent">
+          <Trophy className="w-10 h-10 mx-auto mb-2 text-yellow-500" />
+          <h2 className="text-xl font-bold">Rankings Globais</h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Top motoristas por quilómetros</p>
+        </Card>
+
+        <div className="space-y-3">
+          {leaderboardData.length > 0 ? (
+            leaderboardData.map((leader: any, idx: number) => {
+              const position = idx + 1;
+              const isCurrentUser = leader.id === currentUserId;
+              const level = Math.floor(leader.xp / 1000);
+
+              return (
+                <Card 
+                  key={leader.id} 
+                  className={`p-4 hover-elevate ${isCurrentUser ? 'border-2 border-primary' : ''} bg-gradient-to-br ${getTrophyGradient(position)}`}
+                  data-testid={`card-leader-${position}`}
+                >
+                  <div className="flex items-center gap-4">
+                    {position <= 3 ? (
+                      <Trophy className={`w-8 h-8 ${getTrophyColor(position)}`} />
+                    ) : (
+                      <Award className={`w-8 h-8 ${isCurrentUser ? 'text-primary' : 'text-gray-400 dark:text-gray-500'}`} />
+                    )}
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-lg">#{position}</span>
+                        <p className="font-bold truncate">{leader.username}{isCurrentUser ? ' (TU)' : ''}</p>
+                      </div>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        {leader.totalKm.toFixed(1)} km • Lvl {level}
+                      </p>
+                    </div>
+                    {position === 1 && (
+                      <Badge className="bg-yellow-500/20 text-yellow-700 dark:text-yellow-400 border-yellow-500/50">
+                        1º
+                      </Badge>
+                    )}
+                  </div>
+                </Card>
+              );
+            })
+          ) : (
+            <Card className="p-8 text-center">
+              <Trophy className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+              <p className="text-gray-600 dark:text-gray-400">
+                Nenhum ranking disponível ainda. Complete viagens para aparecer no leaderboard!
+              </p>
+            </Card>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const ReportsScreen = () => (
+    <div className="p-4 space-y-4 overflow-auto pb-20">
+      <Card className="p-6 text-center bg-gradient-to-br from-red-500/10 to-orange-500/10">
+        <div className="flex items-center justify-center gap-3 mb-2">
+          <AlertTriangle className="w-10 h-10 text-orange-600" />
+          <div className="text-left">
+            <h2 className="text-xl font-bold">Alertas da Comunidade</h2>
+            <p className="text-sm text-gray-500">4 alertas ativos</p>
+          </div>
+        </div>
+      </Card>
+
+      <div className="space-y-3">
+        <Card className="p-4" data-testid="card-report-1">
+          <div className="flex justify-between items-start mb-2">
+            <div className="flex items-center gap-2">
+              <Car className="w-5 h-5 text-red-600" />
+              <span className="font-bold">TRÁFEGO</span>
+            </div>
+            <Badge className="bg-red-100 text-red-700">Alto</Badge>
+          </div>
+          <div className="flex items-center gap-1 mb-1">
+            <MapPin className="w-4 h-4 text-gray-500" />
+            <p className="text-sm">A1 - Lisboa</p>
+          </div>
+          <p className="text-xs text-gray-500">2 min atrás • 23 upvotes</p>
+        </Card>
+
+        <Card className="p-4" data-testid="card-report-2">
+          <div className="flex justify-between items-start mb-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-orange-600" />
+              <span className="font-bold">ACIDENTE</span>
+            </div>
+            <Badge className="bg-orange-100 text-orange-700">Médio</Badge>
+          </div>
+          <div className="flex items-center gap-1 mb-1">
+            <MapPin className="w-4 h-4 text-gray-500" />
+            <p className="text-sm">A2 - Porto</p>
+          </div>
+          <p className="text-xs text-gray-500">15 min atrás • 15 upvotes</p>
+        </Card>
+
+        <Card className="p-4" data-testid="card-report-3">
+          <div className="flex justify-between items-start mb-2">
+            <div className="flex items-center gap-2">
+              <Flag className="w-5 h-5 text-yellow-600" />
+              <span className="font-bold">POLÍCIA</span>
+            </div>
+            <Badge className="bg-yellow-100 text-yellow-700">Baixo</Badge>
+          </div>
+          <div className="flex items-center gap-1 mb-1">
+            <MapPin className="w-4 h-4 text-gray-500" />
+            <p className="text-sm">IC19 - Sintra</p>
+          </div>
+          <p className="text-xs text-gray-500">1h atrás • 8 upvotes</p>
+        </Card>
+      </div>
+
+      <Button data-testid="button-add-report" size="icon" className="fixed bottom-20 right-4 rounded-full shadow-lg">
+        <AlertTriangle className="w-5 h-5" />
+      </Button>
+    </div>
+  );
+
+  const renderScreen = () => {
+    switch (currentScreen) {
+      case 'map': return <MapScreen />;
+      case 'profile': return <ProfileScreen />;
+      case 'leaderboard': return <LeaderboardScreen />;
+      case 'reports': return <ReportsScreen />;
+      default: return <MapScreen />;
+    }
+  };
+
+  return (
+    <div className="h-screen flex flex-col bg-background">
+      <div className="bg-primary text-white p-4 text-center">
+        <div className="flex items-center justify-center gap-2">
+          <Navigation className="w-6 h-6" />
+          <h1 className="text-xl font-bold">ROADMATE GPS</h1>
+        </div>
+      </div>
+
+      {renderScreen()}
+
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex justify-around py-2 safe-bottom">
+        <Button
+          variant="ghost"
+          className={`flex-1 flex-col h-14 ${currentScreen === 'map' ? 'text-primary' : 'text-gray-500'}`}
+          onClick={() => setCurrentScreen('map')}
+          data-testid="tab-map"
+        >
+          <Navigation className="w-6 h-6" />
+          <span className="text-xs mt-1">Mapa</span>
+        </Button>
+        <Button
+          variant="ghost"
+          className={`flex-1 flex-col h-14 ${currentScreen === 'profile' ? 'text-primary' : 'text-gray-500'}`}
+          onClick={() => setCurrentScreen('profile')}
+          data-testid="tab-profile"
+        >
+          <User className="w-6 h-6" />
+          <span className="text-xs mt-1">Perfil</span>
+        </Button>
+        <Button
+          variant="ghost"
+          className={`flex-1 flex-col h-14 ${currentScreen === 'leaderboard' ? 'text-primary' : 'text-gray-500'}`}
+          onClick={() => setCurrentScreen('leaderboard')}
+          data-testid="tab-leaderboard"
+        >
+          <Trophy className="w-6 h-6" />
+          <span className="text-xs mt-1">Rankings</span>
+        </Button>
+        <Button
+          variant="ghost"
+          className={`flex-1 flex-col h-14 ${currentScreen === 'reports' ? 'text-primary' : 'text-gray-500'}`}
+          onClick={() => setCurrentScreen('reports')}
+          data-testid="tab-reports"
+        >
+          <AlertTriangle className="w-6 h-6" />
+          <span className="text-xs mt-1">Alertas</span>
+        </Button>
+      </nav>
+
+      {/* POI Sidebar - TomTom Style (Right Side) */}
+      {currentScreen === 'map' && !destination && nearbyPOIs.length > 0 && (
+        <div className="absolute top-40 right-4 z-20 w-64 hidden md:block" data-testid="poi-sidebar">
+          <Card className="bg-white/95 dark:bg-gray-900/95 backdrop-blur-md p-3 shadow-xl">
+            <h3 className="font-bold text-sm mb-2 flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-primary" />
+              Próximos POIs
+            </h3>
+            <div className="space-y-1 max-h-96 overflow-y-auto">
+              {nearbyPOIs.map(poi => (
+                <button
+                  key={`${poi.type}-${poi.id}`}
+                  onClick={() => {
+                    // Center map on POI
+                    if (map.current) {
+                      map.current.flyTo({
+                        center: [poi.longitude, poi.latitude],
+                        zoom: 14,
+                        duration: 1000
+                      });
+                    }
+                    // Open details for truck parks
+                    if (poi.type === 'truck_park') {
+                      const park = truckParks.find(p => p.id === poi.id);
+                      if (park) {
+                        setSelectedPark(park);
+                        setShowParkDetails(true);
+                      }
+                    }
+                  }}
+                  className="w-full text-left p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  data-testid={`poi-${poi.type}-${poi.id}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="flex-shrink-0">
+                      {poi.icon === 'truck' && <Truck className="w-5 h-5 text-green-600" />}
+                      {poi.icon === 'fuel' && <Fuel className="w-5 h-5 text-blue-600" />}
+                      {poi.icon === 'camera' && <Camera className="w-5 h-5 text-red-600" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold truncate">{poi.name}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {poi.distance < 1 
+                          ? `${Math.round(poi.distance * 1000)}m` 
+                          : `${poi.distance.toFixed(1)}km`}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Radarbot-Style Visual Alert Modal - Task 4 */}
+      <Dialog open={showRadarModal} onOpenChange={setShowRadarModal}>
+        <DialogContent className="sm:max-w-md bg-gradient-to-b from-red-600 to-red-700 border-4 border-red-400 p-0 gap-0" data-testid="dialog-radar-alert">
+          {nearbyCamera && currentLocation && (
+            <div className="p-6 text-center text-white animate-pulse">
+              {/* Radar Type Header */}
+              <div className="mb-4">
+                <h2 className="text-3xl font-black tracking-wider" data-testid="text-radar-type">
+                  {nearbyCamera.type === 'fixed' && 'RADAR FIXO'}
+                  {nearbyCamera.type === 'mobile' && 'RADAR MÓVEL'}
+                  {nearbyCamera.type === 'redlight' && 'RADAR SEMÁFORO'}
+                  {nearbyCamera.type === 'section' && 'RADAR DE TROÇO'}
+                </h2>
+              </div>
+
+              {/* Current Speed - HUGE */}
+              <div className="mb-6">
+                <div className="text-8xl font-black leading-none mb-2" data-testid="text-radar-current-speed">
+                  {Math.round(speed)}
+                </div>
+                <div className="text-xl font-medium opacity-90">km/h</div>
+              </div>
+
+              {/* Speed Limit Badge */}
+              <div className="flex justify-center mb-6">
+                <div className="bg-white rounded-full w-24 h-24 flex items-center justify-center border-8 border-red-200 shadow-2xl">
+                  <div className="text-center">
+                    <div className="text-4xl font-black text-red-600" data-testid="text-radar-limit">
+                      {nearbyCamera.speedLimit}
+                    </div>
+                    <div className="text-xs font-bold text-gray-600">LIMITE</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Distance */}
+              <div className="mb-4">
+                <div className="text-2xl font-bold" data-testid="text-radar-distance">
+                  📍 {Math.round(calculateDistance(
+                    currentLocation[1], 
+                    currentLocation[0], 
+                    nearbyCamera.latitude, 
+                    nearbyCamera.longitude
+                  ) * 1000)}m
+                </div>
+              </div>
+
+              {/* Confidence Indicator (Placeholder) */}
+              <div className="flex justify-center gap-2 mt-4">
+                <div className="w-3 h-3 rounded-full bg-white shadow-lg"></div>
+                <div className="w-3 h-3 rounded-full bg-white shadow-lg"></div>
+                <div className="w-3 h-3 rounded-full bg-white shadow-lg"></div>
+                <div className="w-3 h-3 rounded-full bg-white/40"></div>
+                <div className="w-3 h-3 rounded-full bg-white/40"></div>
+              </div>
+              <div className="text-xs mt-2 opacity-75">Confiabilidade da Comunidade</div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Community Verification Modal - Task 5 (Only for Mobile Cameras) */}
+      <Dialog open={showVerificationModal} onOpenChange={setShowVerificationModal}>
+        <DialogContent className="sm:max-w-md" data-testid="dialog-verification">
+          {cameraToVerify && currentLocation && (
+            <div className="p-4 text-center">
+              {/* Question Header */}
+              <div className="mb-6">
+                <AlertTriangle className="w-16 h-16 mx-auto mb-3 text-orange-500" />
+                <h2 className="text-2xl font-bold mb-2" data-testid="text-verification-question">
+                  Este radar ainda existe aqui?
+                </h2>
+                <p className="text-sm text-gray-600">
+                  Ajuda a comunidade mantendo os dados atualizados
+                </p>
+              </div>
+
+              {/* Camera Info */}
+              <div className="bg-gray-100 rounded-lg p-3 mb-6">
+                <div className="text-sm font-medium text-gray-700 mb-1">
+                  {cameraToVerify.type === 'mobile' && 'Zona de Radares Móveis'}
+                </div>
+                <div className="text-xs text-gray-500">
+                  📍 {Math.round(calculateDistance(
+                    currentLocation[1], 
+                    currentLocation[0], 
+                    cameraToVerify.latitude, 
+                    cameraToVerify.longitude
+                  ) * 1000)}m atrás
+                </div>
+              </div>
+
+              {/* Verification Buttons */}
+              {!verificationLoading ? (
+                <div className="flex gap-3">
+                  <Button
+                    variant="outline"
+                    className="flex-1 h-16 text-lg border-2 border-red-500 text-red-600 hover:bg-red-50"
+                    onClick={async () => {
+                      if (!currentUserId || !currentLocation) return;
+                      
+                      setVerificationLoading(true);
+                      try {
+                        const result = await apiRequest({
+                          url: `/api/speed-cameras/${cameraToVerify.id}/verify`,
+                          method: 'POST',
+                          data: {
+                            userId: currentUserId,
+                            latitude: currentLocation[1],
+                            longitude: currentLocation[0],
+                            verification: 'not_found'
+                          }
+                        });
+
+                        if (result.cameraDeleted) {
+                          toast({
+                            title: "Radar Removido! 🎉",
+                            description: `${result.notFoundCount} users confirmaram. Radar desativado.`,
+                            duration: 5000,
+                          });
+                        } else {
+                          toast({
+                            title: "Obrigado! ✅",
+                            description: `Verificação registada (${result.notFoundCount} "não existe")`,
+                          });
+                        }
+                        
+                        setShowVerificationModal(false);
+                        setCameraToVerify(null);
+                      } catch (error: any) {
+                        toast({
+                          title: "Erro na Verificação",
+                          description: error.message || "Tenta novamente mais tarde",
+                          variant: "destructive",
+                        });
+                      } finally {
+                        setVerificationLoading(false);
+                      }
+                    }}
+                    data-testid="button-verify-not-found"
+                  >
+                    <XCircle className="w-6 h-6 mr-2" />
+                    Não Existe
+                  </Button>
+
+                  <Button
+                    variant="default"
+                    className="flex-1 h-16 text-lg bg-green-600 hover:bg-green-700"
+                    onClick={async () => {
+                      if (!currentUserId || !currentLocation) return;
+                      
+                      setVerificationLoading(true);
+                      try {
+                        const result = await apiRequest({
+                          url: `/api/speed-cameras/${cameraToVerify.id}/verify`,
+                          method: 'POST',
+                          data: {
+                            userId: currentUserId,
+                            latitude: currentLocation[1],
+                            longitude: currentLocation[0],
+                            verification: 'confirmed'
+                          }
+                        });
+
+                        toast({
+                          title: "Obrigado! ✅",
+                          description: `Radar confirmado (${result.confirmedCount} confirmações)`,
+                        });
+                        
+                        setShowVerificationModal(false);
+                        setCameraToVerify(null);
+                      } catch (error: any) {
+                        toast({
+                          title: "Erro na Verificação",
+                          description: error.message || "Tenta novamente mais tarde",
+                          variant: "destructive",
+                        });
+                      } finally {
+                        setVerificationLoading(false);
+                      }
+                    }}
+                    data-testid="button-verify-confirmed"
+                  >
+                    <CheckCircle2 className="w-6 h-6 mr-2" />
+                    Sim, Existe
+                  </Button>
+                </div>
+              ) : (
+                <div className="py-8">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+                  <p className="mt-4 text-sm text-gray-500">A enviar verificação...</p>
+                </div>
+              )}
+
+              {/* Skip Button */}
+              {!verificationLoading && (
+                <Button
+                  variant="ghost"
+                  className="mt-4 text-sm"
+                  onClick={() => {
+                    setShowVerificationModal(false);
+                    setCameraToVerify(null);
+                  }}
+                  data-testid="button-skip-verification"
+                >
+                  Pular
+                </Button>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {showParkDetails && selectedPark && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center"
+          onClick={() => setShowParkDetails(false)}
+          data-testid="park-details-overlay"
+        >
+          <Card 
+            className="w-full max-w-2xl rounded-t-3xl p-6 max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+            data-testid="card-park-details"
+          >
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h2 className="text-2xl font-bold mb-1" data-testid="text-park-name">{selectedPark.name}</h2>
+                <div className="flex items-center gap-2 text-gray-600">
+                  <MapPin className="w-4 h-4" />
+                  <span className="text-sm" data-testid="text-park-address">{selectedPark.address}</span>
+                </div>
+              </div>
+              <Button 
+                variant="ghost" 
+                size="icon"
+                onClick={() => setShowParkDetails(false)}
+                data-testid="button-close-park-details"
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded-lg" data-testid="card-available-spots">
+                <p className="text-xs text-gray-600 dark:text-gray-400">Vagas Disponíveis</p>
+                <p className="text-2xl font-bold text-green-600">{selectedPark.availableSpots}/{selectedPark.totalSpots}</p>
+              </div>
+              <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg" data-testid="card-rating">
+                <p className="text-xs text-gray-600 dark:text-gray-400">Avaliação</p>
+                <p className="text-2xl font-bold text-blue-600">
+                  {selectedPark.rating > 0 ? `${selectedPark.rating.toFixed(1)} ⭐` : 'N/A'}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <h3 className="font-bold mb-2">Tipos de Veículos</h3>
+                <div className="flex flex-wrap gap-2">
+                  {selectedPark.vehicleTypes.map(type => (
+                    <Badge key={type} className="bg-primary/10 text-primary" data-testid={`badge-vehicle-${type}`}>
+                      {type === 'truck' && <Truck className="w-3 h-3 mr-1" />}
+                      {type === 'car' && <Car className="w-3 h-3 mr-1" />}
+                      {type === 'motorcycle' && <Bike className="w-3 h-3 mr-1" />}
+                      {type.toUpperCase()}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="font-bold mb-2">Comodidades</h3>
+                <div className="flex flex-wrap gap-2">
+                  {selectedPark.amenities.map(amenity => (
+                    <Badge key={amenity} variant="outline" data-testid={`badge-amenity-${amenity}`}>
+                      {amenity}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 text-sm">
+                <div className="flex items-center gap-1">
+                  <Clock className="w-4 h-4" />
+                  <span>{selectedPark.is24h ? '24h' : 'Horário limitado'}</span>
+                </div>
+                {selectedPark.isSecure && (
+                  <div className="flex items-center gap-1">
+                    <Shield className="w-4 h-4 text-green-600" />
+                    <span>Seguro</span>
+                  </div>
+                )}
+              </div>
+
+              {selectedPark.pricePerHour && (
+                <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg">
+                  <p className="text-sm text-gray-600 dark:text-gray-400">Preço por hora</p>
+                  <p className="text-xl font-bold">€{selectedPark.pricePerHour.toFixed(2)}</p>
+                </div>
+              )}
+
+              {selectedPark.verified && (
+                <Badge className="bg-green-600 text-white">
+                  <Award className="w-3 h-3 mr-1" />
+                  Verificado
+                </Badge>
+              )}
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <Button 
+                className="flex-1" 
+                onClick={async () => {
+                  if (selectedPark) {
+                    const destCoords: [number, number] = [selectedPark.longitude, selectedPark.latitude];
+                    await calculateRoute(destCoords);
+                    setShowParkDetails(false);
+                    setCurrentScreen('map');
+                    toast({
+                      title: "Rota calculada",
+                      description: `Navegando para ${selectedPark.name}`,
+                    });
+                  }
+                }}
+                data-testid="button-navigate-to-park"
+              >
+                <Navigation className="w-4 h-4 mr-2" />
+                Navegar
+              </Button>
+              <Button 
+                variant="outline" 
+                className="flex-1"
+                onClick={() => {
+                  if (!currentUserId) {
+                    setShowUsernamePrompt(true);
+                  } else {
+                    setShowUpdateForm(true);
+                    setUpdateAvailableSpots(selectedPark?.availableSpots || 0);
+                  }
+                }}
+                data-testid="button-update-park"
+              >
+                Atualizar Info
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Username Prompt Modal */}
+      {showUsernamePrompt && (
+        <div 
+          className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+          onClick={() => setShowUsernamePrompt(false)}
+          data-testid="username-prompt-overlay"
+        >
+          <Card 
+            className="w-full max-w-md p-6"
+            onClick={(e) => e.stopPropagation()}
+            data-testid="card-username-prompt"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold">Qual é o teu nome?</h2>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => setShowUsernamePrompt(false)}
+                data-testid="button-close-username-prompt"
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+            
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Para contribuir com atualizações e ganhar XP, precisamos de um nome de utilizador.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="username">Nome de utilizador</Label>
+                <Input
+                  id="username"
+                  placeholder="Ex: Motorista123"
+                  value={tempUsername}
+                  onChange={(e) => setTempUsername(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSaveUsername()}
+                  data-testid="input-username"
+                />
+              </div>
+
+              <Button 
+                className="w-full" 
+                onClick={handleSaveUsername}
+                data-testid="button-save-username"
+              >
+                Guardar e Continuar
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Update Park Form Modal */}
+      {showUpdateForm && selectedPark && (
+        <div 
+          className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 overflow-y-auto"
+          onClick={() => setShowUpdateForm(false)}
+          data-testid="update-form-overlay"
+        >
+          <Card 
+            className="w-full max-w-md p-6 my-8"
+            onClick={(e) => e.stopPropagation()}
+            data-testid="card-update-form"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold">Atualizar {selectedPark.name}</h2>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => setShowUpdateForm(false)}
+                data-testid="button-close-update-form"
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="updateType">Tipo de atualização</Label>
+                <Select value={updateType} onValueChange={(value: any) => setUpdateType(value)}>
+                  <SelectTrigger data-testid="select-update-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="availability">Disponibilidade de vagas</SelectItem>
+                    <SelectItem value="rating">Avaliação</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {updateType === 'availability' && (
+                <div>
+                  <Label htmlFor="availableSpots">Vagas disponíveis</Label>
+                  <Input
+                    id="availableSpots"
+                    type="number"
+                    min="0"
+                    max={selectedPark.totalSpots}
+                    value={updateAvailableSpots}
+                    onChange={(e) => setUpdateAvailableSpots(parseInt(e.target.value) || 0)}
+                    data-testid="input-available-spots"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Máx: {selectedPark.totalSpots} vagas
+                  </p>
+                </div>
+              )}
+
+              {updateType === 'rating' && (
+                <div>
+                  <Label>Avaliação</Label>
+                  <div className="flex gap-2 mt-2">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <Button
+                        key={star}
+                        size="icon"
+                        variant={updateRating >= star ? "default" : "outline"}
+                        onClick={() => setUpdateRating(star)}
+                        data-testid={`button-star-${star}`}
+                      >
+                        <Star className="w-4 h-4" fill={updateRating >= star ? "currentColor" : "none"} />
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <Label htmlFor="comment">Comentário (opcional)</Label>
+                <Textarea
+                  id="comment"
+                  placeholder="Ex: Estacionamento cheio, muitas vagas..."
+                  value={updateComment}
+                  onChange={(e) => setUpdateComment(e.target.value)}
+                  rows={3}
+                  data-testid="textarea-comment"
+                />
+              </div>
+
+              <Button 
+                className="w-full" 
+                onClick={handleSubmitParkUpdate}
+                disabled={!currentUserId}
+                data-testid="button-submit-update"
+              >
+                Enviar atualização (+5 XP)
+              </Button>
+
+              {currentUsername && (
+                <p className="text-xs text-center text-gray-500">
+                  Atualização por: {currentUsername}
+                </p>
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,624 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0a0f;
+    color: #fff;
+    overflow: hidden;
+}
+
+/* --- MAPA --- */
+#map {
+    position: absolute;
+    top: 60px;
+    left: 150px;
+    bottom: 70px;
+    width: calc(100% - 450px);
+    height: calc(100vh - 130px);
+    z-index: 1 !important;
+}
+
+/* --- BARRA DE NAVEGACAO SUPERIOR (Header) --- */
+#navigation-header {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 60px;
+    background: #1a2333e0;
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 15px;
+    z-index: 50 !important;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+}
+
+#eta-info {
+    font-size: 14px;
+    text-align: center;
+    padding: 8px 15px;
+    background: linear-gradient(135deg, #007bff, #0056b3);
+    border-radius: 8px;
+    font-weight: bold;
+    min-width: 80px;
+}
+
+#eta-info .label {
+    display: block;
+    font-size: 10px;
+    opacity: 0.8;
+    text-transform: uppercase;
+}
+
+#eta-time {
+    display: block;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+#street-name {
+    font-size: 20px;
+    font-weight: 600;
+    flex-grow: 1;
+    text-align: center;
+    color: #00ff7f;
+    text-shadow: 0 0 10px rgba(0, 255, 127, 0.5);
+}
+
+#menu-and-sound-controls button {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: white;
+    font-size: 20px;
+    margin-left: 8px;
+    cursor: pointer;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    transition: all 0.2s;
+}
+
+#menu-and-sound-controls button:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* --- CAIXA LATERAL DE INSTRUCOES (TomTom Side Border) --- */
+#instruction-box {
+    position: absolute;
+    top: 60px;
+    left: 0;
+    height: calc(100vh - 60px);
+    width: 150px;
+    background: #1a2333cc;
+    backdrop-filter: blur(10px);
+    z-index: 50 !important;
+    padding: 20px 15px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    text-align: center;
+    color: white;
+    box-shadow: 5px 0 15px rgba(0, 0, 0, 0.5);
+    line-height: 1.3;
+}
+
+#next-instruction {
+    font-size: 16px;
+    font-weight: bold;
+    color: #00ff7f;
+    margin-bottom: 15px;
+    text-shadow: 0 0 10px rgba(0, 255, 127, 0.5);
+}
+
+#distance-to-next {
+    font-size: 36px;
+    font-weight: 900;
+    margin-bottom: 15px;
+    color: #00c8ff;
+    text-shadow: 0 0 15px rgba(0, 200, 255, 0.5);
+}
+
+#current-street-name {
+    font-size: 12px;
+    color: #aaa;
+}
+
+/* --- WIDGET DE ALERTA DE PROXIMA AMEACA --- */
+#next-alert-widget {
+    position: absolute;
+    top: 70px;
+    right: 310px;
+    background: #ff4757e0;
+    color: white;
+    padding: 10px 18px;
+    border-radius: 10px;
+    font-weight: bold;
+    font-size: 14px;
+    z-index: 45 !important;
+    box-shadow: 0 0 20px rgba(255, 71, 87, 0.6);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: pulse-alert 2s infinite;
+}
+
+@keyframes pulse-alert {
+    0%, 100% { box-shadow: 0 0 20px rgba(255, 71, 87, 0.6); }
+    50% { box-shadow: 0 0 30px rgba(255, 71, 87, 0.9); }
+}
+
+#next-alert-distance {
+    background: white;
+    color: #1a2333;
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-size: 12px;
+}
+
+/* --- BARRA LATERAL RADARBOT --- */
+#sidebar-container {
+    position: absolute;
+    top: 60px;
+    right: 0;
+    height: calc(100vh - 60px);
+    width: 300px;
+    background: #1a2333;
+    color: #fff;
+    padding: 15px;
+    box-shadow: -5px 0 15px rgba(0, 0, 0, 0.5);
+    transition: transform 0.3s ease-in-out;
+    z-index: 50 !important;
+    box-sizing: border-box;
+    overflow-y: auto;
+}
+
+#toggle-sidebar-btn {
+    display: none;
+}
+
+#sidebar-header {
+    color: #00c8ff;
+    font-size: 16px;
+    margin-bottom: 15px;
+}
+
+#route-summary {
+    background: rgba(0, 200, 255, 0.1);
+    border: 1px solid rgba(0, 200, 255, 0.3);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 15px;
+}
+
+.route-info {
+    font-size: 14px;
+    margin: 5px 0;
+}
+
+.route-info span {
+    color: #00ff7f;
+    font-weight: bold;
+}
+
+#sidebar-container hr {
+    border: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    margin: 15px 0;
+}
+
+.radarbot-header {
+    color: #ff6666;
+    font-size: 14px;
+    margin-bottom: 10px;
+}
+
+#poi-list, #alert-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+#poi-list li, #alert-list li {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+#poi-list li:hover, #alert-list li:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+#gamification-status {
+    background: linear-gradient(135deg, #2a2a4e, #1a1a2e);
+    border: 1px solid rgba(255, 215, 0, 0.3);
+    border-radius: 10px;
+    padding: 15px;
+    margin-top: 15px;
+    text-align: center;
+}
+
+#gamification-status p {
+    font-size: 18px;
+    margin-bottom: 10px;
+}
+
+#user-score {
+    color: gold;
+    font-weight: bold;
+    font-size: 24px;
+}
+
+#report-btn {
+    width: 100%;
+    padding: 12px;
+    background: linear-gradient(135deg, #ff6b6b, #cc0000);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+#report-btn:hover {
+    transform: scale(1.02);
+    box-shadow: 0 5px 15px rgba(255, 107, 107, 0.4);
+}
+
+/* --- CONTROLOS INFERIORES --- */
+#controls-bottom {
+    position: absolute;
+    bottom: 0;
+    left: 150px;
+    right: 300px;
+    height: 70px;
+    background: #1a2333;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 15px;
+    z-index: 40 !important;
+    box-shadow: 0 -5px 15px rgba(0, 0, 0, 0.5);
+}
+
+#speed-indicator {
+    min-width: 100px;
+    height: 50px;
+    background: linear-gradient(135deg, #0f1520, #1a2333);
+    border: 3px solid #00ff88;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
+}
+
+#current-speed {
+    font-size: 28px;
+    font-weight: 700;
+    color: #00ff88;
+}
+
+.unit {
+    font-size: 12px;
+    color: #888;
+}
+
+#search-input {
+    flex: 1;
+    height: 45px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    padding: 0 20px;
+    font-size: 16px;
+    color: #fff;
+    outline: none;
+    transition: all 0.2s;
+}
+
+#search-input:focus {
+    border-color: #00c8ff;
+    box-shadow: 0 0 10px rgba(0, 200, 255, 0.3);
+}
+
+#search-input::placeholder {
+    color: #888;
+}
+
+#btn-search {
+    width: 50px;
+    height: 45px;
+    background: linear-gradient(135deg, #00c8ff, #0088cc);
+    border: none;
+    border-radius: 10px;
+    color: white;
+    font-size: 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+#btn-search:hover {
+    transform: scale(1.05);
+    box-shadow: 0 5px 15px rgba(0, 200, 255, 0.4);
+}
+
+/* --- PAINEL DE PESQUISA --- */
+#search-panel {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #0a0a0f;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+}
+
+#search-header {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 15px;
+    background: #1a2333;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#search-header button {
+    padding: 10px 15px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: #fff;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+#search-input-panel {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    padding: 12px 20px;
+    font-size: 16px;
+    color: #fff;
+    outline: none;
+}
+
+#search-results {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.search-result {
+    padding: 15px;
+    background: #1a2333;
+    border-radius: 10px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1px solid transparent;
+}
+
+.search-result:hover {
+    background: #2a3343;
+    border-color: #00c8ff;
+}
+
+.search-result-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+}
+
+.search-result-address {
+    font-size: 14px;
+    color: #888;
+    margin-top: 5px;
+}
+
+/* --- ALERTA DE RADAR --- */
+#radar-alert {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: linear-gradient(135deg, #ff4444, #cc0000);
+    border-radius: 20px;
+    padding: 25px 35px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    z-index: 150;
+    animation: radar-pulse 1s infinite;
+    box-shadow: 0 0 50px rgba(255, 0, 0, 0.6);
+}
+
+@keyframes radar-pulse {
+    0%, 100% { transform: translate(-50%, -50%) scale(1); }
+    50% { transform: translate(-50%, -50%) scale(1.05); }
+}
+
+#radar-icon {
+    width: 70px;
+    height: 70px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+#radar-info {
+    text-align: left;
+}
+
+#radar-type {
+    font-size: 14px;
+    text-transform: uppercase;
+    opacity: 0.9;
+    letter-spacing: 1px;
+}
+
+#radar-distance-alert {
+    font-size: 36px;
+    font-weight: 700;
+}
+
+#radar-limit {
+    font-size: 18px;
+    opacity: 0.9;
+}
+
+/* --- POPUP DE PROXIMIDADE --- */
+#proximity-warning {
+    position: absolute;
+    bottom: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(135deg, #ff9900, #cc7700);
+    color: white;
+    padding: 15px 30px;
+    border-radius: 15px;
+    font-size: 18px;
+    font-weight: bold;
+    z-index: 100;
+    box-shadow: 0 5px 25px rgba(255, 153, 0, 0.5);
+}
+
+/* --- LOADING --- */
+#loading {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, #0a0a0f, #1a1a2e);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 25px;
+    z-index: 1000;
+}
+
+#loading-spinner {
+    width: 60px;
+    height: 60px;
+    border: 4px solid rgba(0, 200, 255, 0.2);
+    border-top-color: #00c8ff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+#loading-text {
+    color: #888;
+    font-size: 18px;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* --- RESPONSIVE MOBILE --- */
+@media (max-width: 768px) {
+    #map {
+        top: 50px;
+        left: 0;
+        width: 100%;
+        height: calc(100vh - 120px);
+    }
+    
+    #navigation-header {
+        height: 50px;
+        padding: 0 10px;
+    }
+    
+    #street-name {
+        font-size: 14px;
+    }
+    
+    #instruction-box {
+        position: absolute;
+        top: 50px;
+        left: 0;
+        right: 0;
+        width: 100%;
+        height: auto;
+        flex-direction: row;
+        padding: 10px 15px;
+        justify-content: space-between;
+        z-index: 10;
+    }
+    
+    #distance-to-next {
+        font-size: 24px;
+        margin: 0;
+    }
+    
+    #next-alert-widget {
+        top: auto;
+        bottom: 130px;
+        right: 10px;
+        font-size: 12px;
+        padding: 8px 12px;
+    }
+    
+    #sidebar-container {
+        display: none;
+    }
+    
+    #controls-bottom {
+        left: 0;
+        right: 0;
+        height: 70px;
+    }
+    
+    #speed-indicator {
+        min-width: 80px;
+        height: 45px;
+    }
+    
+    #current-speed {
+        font-size: 22px;
+    }
+}
+
+/* --- CAMERA MARKERS --- */
+.camera-marker {
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.camera-marker:hover {
+    transform: scale(1.2);
+}
+
+.camera-popup {
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translate(-50%, -50%) scale(0.9); }
+    to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
